@@ -1,0 +1,1188 @@
+import * as THREE from 'three';
+import { CFG, mulberry32 } from './config.js';
+import {
+  SIDE_VECS, worldPoint, sectionOf, clampOnWall, sectionCenter, nearestSide,
+  stairPoints, gateInsidePoint, isInsideCity, clampFieldPoint,
+} from './world.js';
+import { Company } from './company.js';
+import { DefenseSide, ReserveForce } from './defense.js';
+import { Soldier } from './soldier.js';
+import { rockGeo, rockMat, arrowGeo, arrowMat, sparkGeo, ringGeo, ringGeoBig, ringMatSel, ringMatHover } from './models.js';
+import { openGateDoors } from './city.js';
+import { sfx } from './audio.js';
+
+const SPARK_MATS = {
+  red: new THREE.MeshBasicMaterial({ color: 0xc03028 }),
+  dust: new THREE.MeshBasicMaterial({ color: 0x9a917f }),
+  wood: new THREE.MeshBasicMaterial({ color: 0x7a5230 }),
+  blue: new THREE.MeshBasicMaterial({ color: 0x3d7ac0 }),
+  gray: new THREE.MeshBasicMaterial({ color: 0xcfcabc }),
+};
+
+const _q = new THREE.Quaternion();
+const _t1 = new THREE.Vector3();
+const _t2 = new THREE.Vector3();
+
+// บันไดภายในประจำด้าน — เลนขึ้น/เลนลง คุมระยะห่าง
+class StairChannel {
+  constructor(side) {
+    this.side = side;
+    const sp = stairPoints(side);
+    this.base = sp.base;
+    this.top = sp.top;
+    this.len = sp.base.distanceTo(sp.top);
+    this.up = [];
+    this.down = [];
+  }
+  requestUp(s) { s.stair = { s: 0 }; s.state = 'stairUp'; s.zone = 'city'; this.up.push(s); }
+  requestDown(s) { s.stair = { s: this.len }; s.state = 'stairDown'; s.zone = 'city'; this.down.push(s); }
+  downCount() { return this.down.length; }
+  update(dt, onUp, onDown) {
+    this._move(this.up, 1, dt, onUp);
+    this._move(this.down, -1, dt, onDown);
+  }
+  _move(list, dir, dt, onArrive) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (!list[i].alive || !list[i].stair) list.splice(i, 1);
+    }
+    list.sort((a, b) => (dir > 0 ? b.stair.s - a.stair.s : a.stair.s - b.stair.s));
+    let prevS = null;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (!s.alive) { s.stair = null; continue; }
+      let arrived = false;
+      if (dir > 0) {
+        const cap = prevS === null ? this.len : prevS - CFG.rockLogi.spacing;
+        s.stair.s = Math.min(cap, s.stair.s + CFG.rockLogi.stairSpeed * dt);
+        _t1.lerpVectors(this.base, this.top, s.stair.s / this.len);
+        _t1.addScaledVector(SIDE_VECS[this.side].t, 0.95);
+        s.pos.copy(_t1);
+        s.facePoint(this.top, dt);
+        prevS = s.stair.s;
+        if (s.stair.s >= this.len - 0.02) { arrived = true; prevS = this.len; }
+      } else {
+        const cap = prevS === null ? 0 : prevS + CFG.rockLogi.spacing;
+        s.stair.s = Math.max(cap, s.stair.s - CFG.rockLogi.stairSpeed * dt);
+        _t1.lerpVectors(this.base, this.top, s.stair.s / this.len);
+        _t1.addScaledVector(SIDE_VECS[this.side].t, -0.95);
+        s.pos.copy(_t1);
+        s.facePoint(this.base, dt);
+        prevS = s.stair.s;
+        if (s.stair.s <= 0.02) { arrived = true; prevS = 0; }
+      }
+      if (arrived) { onArrive(s); s.stair = null; }
+    }
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (!list[i].alive || !list[i].stair) list.splice(i, 1);
+    }
+  }
+}
+
+export class Battle {
+  constructor(mission, scene, cityRefs, onEvent) {
+    this.mission = mission;
+    this.citySides = cityRefs.sides;
+    this.doorL = cityRefs.doorL;
+    this.doorR = cityRefs.doorR;
+    this.onEvent = onEvent;
+    this.rng = mulberry32(mission.seed ^ 0x51ab);
+    this.group = new THREE.Group();
+    scene.add(this.group);
+
+    this.time = 0;
+    this.ended = false;
+    this.result = null;
+    this.nextLadderId = 0;
+    this.slotCounter = [0, 0, 0, 0];
+    this.archerSlotCounter = [0, 0, 0, 0];
+    this.companies = [];
+    this.defenses = [];
+    this.reserves = null;
+    this.wallFighters = [[], [], [], []].map(() => new Set());
+    this.cityAttackers = new Set();
+    this.selection = new Set();
+    this.hover = null;
+    this.stairs = [0, 1, 2, 3].map((s) => new StairChannel(s));
+    this.captured = [false, false, false, false];
+    this.capT = [0, 0, 0, 0];
+    this.feintHeat = [0, 0, 0, 0];
+    this.gate = { open: false, progress: 0, anim: 0, started: false, breach: 0 };
+    this.rocks = [];
+    this.arrows = [];
+    this.sparks = [];
+    this.fallingLadders = [];
+    this.markers = [];
+    this._ground = [];
+    this.sally = { active: false, cooldown: 25, horses: [], t: 0, target: null };
+    this.shake = 0; // ความแรงจอสั่น (decay เอง)
+    this.stats = { kills: 0, losses: 0, rocksUsed: 0, attackersAlive: 0, deployedTotal: 0, defendersTotal: 0, defendersInitial: 0, capturedCount: 0 };
+
+    // ทัพโจมตี: ด้านละ 40 กอง (หอก20 โล่8 ธนู8 รถทุบ4) + กองม้า
+    for (let side = 0; side < 4; side++) {
+      CFG.army.composition.forEach((ctype, i) => {
+        const col = (i % 8) - 3.5, row = Math.floor(i / 8);
+        const anchor = worldPoint(side, col * 9, CFG.spawnDist + row * 10, 0);
+        this.companies.push(new Company(i, side, ctype, anchor, this));
+      });
+    }
+    for (let i = 0; i < CFG.army.cavalryCompanies; i++) {
+      const anchor = worldPoint(2, -40 + i * 5, CFG.spawnDist + 2, 0);
+      this.companies.push(new Company(i, 2, 'cav', anchor, this));
+    }
+    this.stats.deployedTotal = this.companies.reduce((a, c) => a + c.soldiers.length, 0);
+
+    mission.sides.forEach((cfg, side) => this.defenses.push(new DefenseSide(side, cfg, this)));
+    this.reserves = new ReserveForce(this);
+    this.stats.defendersInitial = this.defenses.reduce((a, d) => a + d.aliveCount(), 0) + this.reserves.aliveCount();
+    this.stats.defendersTotal = this.stats.defendersInitial;
+
+    for (const c of this.companies) {
+      const ring = new THREE.Mesh(c.ctype === 'cav' || c.ctype === 'ram' ? ringGeoBig : ringGeo, ringMatSel);
+      ring.rotation.x = -Math.PI / 2;
+      ring.visible = false;
+      this.group.add(ring);
+      c.selRing = ring;
+    }
+    this.hoverRing = new THREE.Mesh(ringGeo, ringMatHover);
+    this.hoverRing.rotation.x = -Math.PI / 2;
+    this.hoverRing.visible = false;
+    this.group.add(this.hoverRing);
+  }
+
+  // ---------- คำสั่งจากแม่ทัพ ----------
+  assignPlantSlot(side, kind = 'ladder') {
+    if (kind === 'archer') {
+      const i = this.archerSlotCounter[side]++;
+      return -35 + ((i % 8) + 0.5) * (70 / 8);
+    }
+    const i = this.slotCounter[side]++;
+    return -33 + ((i % 40) + 0.5) * (66 / 40);
+  }
+
+  laddersOf(side) {
+    return this.companies.filter((c) => c.side === side && c.ladder).map((c) => c.ladder);
+  }
+
+  groundAttackers() { return this._ground; }
+
+  invadersInCity() {
+    let n = 0;
+    for (const s of this.cityAttackers) if (s.alive) n++;
+    return n;
+  }
+
+  nearestInvader(pos, radius) {
+    let best = null, bestD = radius;
+    for (const s of this.cityAttackers) {
+      if (!s.alive) continue;
+      const d = pos.distanceTo(s.pos);
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
+  }
+
+  // หน่วยบนยอดกำแพงฝ่ายเมืองทั้งหมด (เป้าธนูฝ่ายโจมตี)
+  wallDefenders() {
+    const out = [];
+    for (const d of this.defenses) {
+      for (const s of d.melee) if (s.alive && s.zone === 'wall') out.push(s);
+      for (const s of d.archers) if (s.alive && s.zone === 'wall') out.push(s);
+      for (const c of d.carriers) if (c.s.alive && c.s.zone === 'wall') out.push(c.s);
+    }
+    return out;
+  }
+
+  ramUnderGate() {
+    return this.companies.find((c) => c.ctype === 'ram' && c.state === 'battering' && c.aliveSoldiers.length > 0) || null;
+  }
+
+  // โล่ที่ยังมีชีวิต (ใช้ตรวจกำบังธนู)
+  liveShields() {
+    const out = [];
+    for (const c of this.companies) if (c.ctype === 'shield') for (const s of c.soldiers) if (s.alive) out.push(s);
+    return out;
+  }
+
+  covered(target, shields) {
+    for (const sh of shields) {
+      if (sh.pos.distanceToSquared(target.pos) < CFG.unit.shield.coverRadius ** 2) return true;
+    }
+    return false;
+  }
+
+  toggleSelect(comp, additive) {
+    if (!additive) this.clearSelection();
+    if (comp.selected && additive) {
+      comp.selected = false;
+      this.selection.delete(comp);
+    } else {
+      comp.selected = true;
+      this.selection.add(comp);
+    }
+  }
+
+  clearSelection() {
+    for (const c of this.selection) c.selected = false;
+    this.selection.clear();
+  }
+
+  setHover(comp) { this.hover = comp; }
+
+  issueAssault(side, ladder, archers, rams, cav) {
+    const active = this.companies.filter((c) => c.isLadderCarrier && c.mode === 'assault' && c.side === side && c.aliveSoldiers.length > 0).length;
+    let slots = CFG.maxAssaultPerSide - active;
+    let ordered = 0;
+    for (const c of ladder) {
+      if (slots <= 0) break;
+      if (c.orderAssault(side)) { slots--; ordered++; }
+    }
+    for (const c of archers) if (c.orderAssault(side)) ordered++;
+    for (const c of rams) if (c.orderAssault(side)) ordered++;
+    for (const c of cav) if (c.orderRide(worldPoint(side, 0, CFG.wallHalf + CFG.wallThick + 16, 0))) ordered++;
+    return ordered;
+  }
+
+  orderSelected(rawPoint, cls) {
+    const point = rawPoint.isVector3 ? rawPoint : new THREE.Vector3(rawPoint.x, rawPoint.y || 0, rawPoint.z);
+    const sel = [...this.selection];
+    const ladder = sel.filter((c) => c.isLadderCarrier);
+    const archers = sel.filter((c) => c.ctype === 'archer');
+    const rams = sel.filter((c) => c.ctype === 'ram');
+    const cav = sel.filter((c) => c.ctype === 'cav');
+    let ordered = 0;
+    this.spawnMarker(point, cls.type === 'assault' ? 0xe8c14a : 0x9adf9a);
+
+    if (cls.type === 'assault') {
+      ordered = this.issueAssault(cls.side, ladder, archers, rams, cav);
+      this.onEvent(ordered > 0 ? 'order_assault' : 'order_fail', { side: cls.side, n: ordered });
+    } else if (cls.type === 'city') {
+      if (this.gate.open) {
+        // ประตูเปิด: ราบเดินเข้าเมืองผ่านประตูได้ / ม้าพุ่งเข้าไปเลย
+        for (const c of ladder) if (c.orderCity(point)) ordered++;
+        for (const c of cav) if (c.orderRide(point)) ordered++;
+      } else {
+        // ประตูยังปิด — ตีความเป็นการโจมตีด้านที่ใกล้จุดแตะที่สุด
+        const side = nearestSide(point);
+        ordered = this.issueAssault(side, ladder, archers, rams, cav);
+        this.onEvent(ordered > 0 ? 'order_assault' : 'order_fail', { side, n: ordered });
+      }
+    } else {
+      const p = clampFieldPoint(point);
+      for (const c of sel) {
+        if (c.ctype === 'cav') { if (c.orderRide(p)) ordered++; }
+        else if (c.orderHold(p)) ordered++;
+      }
+    }
+  }
+
+  spawnMarker(pos, color) {
+    const mesh = new THREE.Mesh(ringGeoBig, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(pos.x, 0.1, pos.z);
+    this.group.add(mesh);
+    this.markers.push({ mesh, t: 0 });
+  }
+
+  // ---------- ลูปหลัก ----------
+  update(dt) {
+    if (!this.ended) this.time += dt;
+    this.shake = Math.max(0, this.shake - dt * 2.2);
+    this.refreshGround();
+    this.updateFeintHeat(dt);
+
+    for (const d of this.defenses) d.update(dt);
+    this.reserves.update(dt);
+    this.computeFreeze();
+    for (const c of this.companies) c.update(dt);
+
+    this.updateDescent(dt);
+    this.updateEvacuation(dt);
+    for (let s = 0; s < 4; s++) {
+      this.stairs[s].update(
+        dt,
+        (s2) => this.onStairTopArrived(s, s2),
+        (s2) => this.onStairBottomArrived(s, s2),
+      );
+    }
+
+    this.updateArcherVolley(dt);
+    this.buildArrowGrids();
+    this.meleeCombat(dt);
+    this.updateRocks(dt);
+    this.updateArrows(dt);
+    this.updateSparks(dt);
+    this.updateFallingLadders(dt);
+    this.updateRam(dt);
+    this.updateGate(dt);
+    this.updateSally(dt);
+    this.syncMeshes(dt);
+    this.cleanup();
+
+    if (!this.ended) {
+      this.updateCapture(dt);
+      this.checkEnd();
+    }
+  }
+
+  refreshGround() {
+    this._ground.length = 0;
+    for (const c of this.companies) {
+      for (const s of c.soldiers) {
+        if (s.alive && s.zone === 'field' && s.state !== 'climb') this._ground.push(s);
+      }
+    }
+  }
+
+  updateFeintHeat(dt) {
+    this.feintHeat = [0, 0, 0, 0];
+    for (const g of this._ground) {
+      if (g.state !== 'hold' || !g.company || g.company.mode !== 'hold') continue;
+      let best = 0, bestD = -Infinity;
+      for (let s = 0; s < 4; s++) {
+        const d = SIDE_VECS[s].n.dot(g.pos);
+        if (d > bestD) { bestD = d; best = s; }
+      }
+      const tOff = Math.abs(SIDE_VECS[best].t.dot(g.pos));
+      if (bestD > 50 && bestD < 112 && tOff <= 60) this.feintHeat[best] += dt;
+    }
+  }
+
+  computeFreeze() {
+    for (const d of this.defenses) {
+      for (const l of this.laddersOf(d.side)) l.freeze = false;
+      const R = d.roller;
+      if (R.phase === 'telegraph' && R.target && !R.targetIsRam) R.target.freeze = true;
+    }
+    for (const r of this.rocks) if (r.alive && r.ladder && !r.ladder.broken) r.ladder.freeze = true;
+  }
+
+  // ---------- บันไดใน: ลงจากกำแพง / พลขนหินขึ้น ----------
+  updateDescent(dt) {
+    for (let side = 0; side < 4; side++) {
+      if (!this.captured[side]) continue;
+      const st = this.stairs[side];
+      const sp = stairPoints(side);
+      let pending = 0;
+      for (const s of this.wallFighters[side]) if (s.alive && s.state === 'toStair') pending++;
+      let slots = CFG.descendAtOnce - st.down.length - pending;
+      for (const s of this.wallFighters[side]) {
+        if (!s.alive) continue;
+        if (slots > 0 && s.state === 'wall') {
+          s.state = 'toStair';
+          s.orderTarget = sp.top;
+          slots--;
+        }
+        if (s.state === 'toStair' && s.pos.distanceTo(sp.top) < 1.3) {
+          st.requestDown(s);
+        }
+      }
+    }
+  }
+
+  // AI เมือง: เสียกำแพง ≥ 2 ด้าน + ผู้บุกเข้าเมืองแล้ว → สละกำแพงที่เหลือ รวมพลตั้งรับขั้นสุดท้ายในถนน
+  updateEvacuation(dt) {
+    if (!this.gate.open) return;
+    if (this.captured.filter(Boolean).length < 2) return;
+    if (this.invadersInCity() < 12) return;
+    for (const d of this.defenses) {
+      if (d.evacuated) continue;
+      d.evacuated = true;
+      const sp = stairPoints(d.side);
+      let sent = 0;
+      for (const s of d.melee) {
+        if (!s.alive) continue;
+        if (s.zone === 'wall' && !s.stair) {
+          s.state = 'toStairD';
+          s.orderTarget = sp.top;
+          sent++;
+        }
+      }
+      for (const s of d.archers) {
+        if (!s.alive || s.zone !== 'wall' || s.stair) continue;
+        s.state = 'toStairD';
+        s.orderTarget = sp.top;
+        sent++;
+      }
+      if (sent > 0) this.onEvent('evacuate', { side: d.side, n: sent });
+    }
+    for (const d of this.defenses) {
+      const st = this.stairs[d.side];
+      const sp = stairPoints(d.side);
+      for (const s of [...d.melee, ...d.archers]) {
+        if (s.alive && s.state === 'toStairD' && s.pos.distanceTo(sp.top) < 1.3 && st.down.length < 12) {
+          st.requestDown(s);
+        }
+      }
+    }
+  }
+
+  onStairTopArrived(side, s) {
+    if (s.utype === 'carrier') {
+      const c = this.defenses[side].carriers.find((cc) => cc.s === s);
+      if (c) { s.zone = 'wall'; this.defenses[side].carrierArrivedTop(c); }
+      return;
+    }
+    s.zone = 'wall';
+    this.reserves.releaseSoldier(s); // ออกจากกองสำรอง — ไม่งั้นถูกนับซ้ำสองที่
+    this.defenses[side].addReinforcement(s);
+  }
+
+  onStairBottomArrived(side, s) {
+    if (s.utype === 'carrier') {
+      const c = this.defenses[side].carriers.find((cc) => cc.s === s);
+      if (c) { s.zone = 'city'; this.defenses[side].carrierArrivedBottom(c); }
+      return;
+    }
+    if (s.faction === 'def') {
+      // ทหารเมืองสละกำแพงลงมา → ตั้งแนวรับที่ลานวัง (ไม่กอดปากประตูจนทะลุไม่ได้)
+      s.zone = 'city';
+      s.state = 'order';
+      s.orderTarget = worldPoint(2, 0, 22, 0);
+      return;
+    }
+    s.zone = 'city';
+    s.state = 'order';
+    s.orderTarget = gateInsidePoint();
+    this.wallFighters[side].delete(s);
+    this.cityAttackers.add(s);
+  }
+
+  // ทหารราบเดินเข้าเมืองผ่านประตู (จาก company.cityMarch)
+  onInfEnteredCity(s) {
+    this.cityAttackers.add(s);
+  }
+  onInfLeftCity(s) {
+    this.cityAttackers.delete(s);
+  }
+
+  // ---------- นักธนูฝ่ายโจมตี: ยิงกดกำแพง ----------
+  updateArcherVolley(dt) {
+    let wallUnits = this.wallDefenders();
+    // เมื่อประตูเปิด ทหารเมืองที่ลงมาในถนน (incl. last stand) ก็ยิงได้
+    if (this.gate.open) {
+      for (const d of this.defenses) {
+        for (const s of d.melee) if (s.alive && s.zone === 'city') wallUnits.push(s);
+      }
+      for (const sq of this.reserves.squads) {
+        for (const s of sq.soldiers) if (s.alive && s.zone === 'city') wallUnits.push(s);
+      }
+    }
+    for (const c of this.companies) {
+      if (c.ctype !== 'archer' || c.state !== 'volley') continue;
+      for (const s of c.soldiers) {
+        if (!s.alive) continue;
+        s.cd -= dt;
+        if (s.cd > 0) continue;
+        // เลือกเป้าบนกำแพงที่ใกล้สุดในระยะ
+        let best = null, bestD = CFG.unit.atkArch.range;
+        for (const w of wallUnits) {
+          const d = s.pos.distanceTo(w.pos);
+          if (d < bestD) { bestD = d; best = w; }
+        }
+        if (!best) continue;
+        s.cd = CFG.unit.atkArch.atkCd * (0.85 + this.rng() * 0.3);
+        s.facePoint(best.pos, dt);
+        this.fireArrow(s, best, 'atk');
+        sfx.whoosh();
+      }
+    }
+  }
+
+  // ---------- การสู้: กำแพง + ในเมือง + ภาคสนาม (ม้าซอง) ----------
+  meleeCombat(dt) {
+    const units = [];
+    for (const set of this.wallFighters) for (const s of set) if (s.alive) units.push(s);
+    for (const s of this.cityAttackers) if (s.alive) units.push(s);
+    for (const d of this.defenses) {
+      for (const s of d.melee) if (s.alive) units.push(s);
+      for (const s of d.archers) if (s.alive) units.push(s);
+      for (const c of d.carriers) if (c.s.alive) units.push(c.s);
+    }
+    for (const s of this.reserves.allSoldiers()) if (s.alive) units.push(s);
+
+    // ม้าซอง + ทหารฝ่ายบุกที่อยู่ในระยะปะทะ (สงครามภาคสนาม)
+    const sally = this.sally.horses.filter((h) => h.alive);
+    if (sally.length) {
+      units.push(...sally);
+      for (const c of this.companies) {
+        for (const s of c.soldiers) {
+          if (!s.alive || s.zone !== 'field') continue;
+          for (const h of sally) {
+            if (s.pos.distanceToSquared(h.pos) < 1000) { units.push(s); break; }
+          }
+        }
+      }
+    }
+
+    const cityDefenders = units.filter((u) => u.faction === 'def' && u.zone === 'city' && u.alive);
+
+    // จัดเรียงตามแกน X — ให้การหาศัตรูสแกนเฉพาะ "เพื่อนบ้านในระยะ" (รองรับทหารนับพัน)
+    units.sort((a, b) => a.pos.x - b.pos.x);
+
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      if (!u.alive) continue;
+      u.inCombat = false;
+
+      if (u.stair) {
+        u.cd -= dt;
+        this.tryAttack(u, this.nearestInWindow(units, i, u, 1.4), dt);
+        continue;
+      }
+
+      // พลขนหินไม่มีศัตรู → ระบบขนส่งเป็นคนคุมการเดิน
+      if (u.faction === 'def' && u.utype === 'carrier') {
+        const enemy = this.nearestInWindow(units, i, u, 1.3);
+        u.cd -= dt;
+        if (enemy) this.tryAttack(u, enemy, dt);
+        continue;
+      }
+
+      const enemy = this.nearestInWindow(units, i, u, 26);
+      u.cd -= dt;
+
+      if (u.state === 'toStair' || u.state === 'toStairD') {
+        if (enemy && u.pos.distanceTo(enemy.pos) < 1.2) this.tryAttack(u, enemy, dt);
+        else { u.stepToward(dt, u.orderTarget, u.speed, 0.4); if (u.zone === 'wall') { u.pos.y = CFG.walkY; clampOnWall(u.pos); } }
+        continue;
+      }
+
+      // นักธนู/รถทุบยืนยิง ไม่ออกไล่ — สู้เฉพาะเมื่อโดนชิด
+      if ((u.utype === 'atkArch' && u.company.state === 'volley') || u.utype === 'crew') {
+        this.tryAttack(u, enemy && u.pos.distanceTo(enemy.pos) < 1.4 ? enemy : null, dt);
+        continue;
+      }
+
+      const engageR = u.kind === 'cav' ? 2.1 : 1.15;
+      const eD = enemy ? u.pos.distanceTo(enemy.pos) : Infinity;
+      if (enemy && eD < engageR) {
+        this.tryAttack(u, enemy, dt);
+        sfx.clash();
+      } else if (enemy && eD < 26) {
+        u.inCombat = true;
+        u.stepToward(dt, enemy.pos, u.speed, engageR * 0.8);
+        this.clampToZone(u);
+      } else {
+        let target = null;
+        if (u.waypoints && u.waypoints.length) {
+          target = u.waypoints[0];
+          if (u.pos.distanceTo(target) < 1.5) { u.waypoints.shift(); target = u.waypoints[0] || null; }
+        }
+        if (!target) {
+          if (u.faction === 'atk' && u.zone === 'wall') target = sectionCenter(u.side);
+          else if (u.faction === 'atk' && u.zone === 'city') {
+            if (u.kind === 'cav') {
+              target = this.nearestCityDefender(u.pos, 95);
+              if (!target) target = u.orderTarget;
+            } else {
+              target = u.orderTarget || gateInsidePoint();
+            }
+          } else if (u.faction === 'def') {
+            target = u.orderTarget || u.homePost;
+          }
+        }
+        if (target) {
+          u.stepToward(dt, target, u.speed, 0.9);
+          this.clampToZone(u);
+        }
+      }
+    }
+  }
+
+  // หาศัตรูใกล้สุดโดยสแกนเฉพาะหน่วยที่ "อยู่ใกล้แกน x" (units เรียงตาม x แล้ว)
+  nearestInWindow(units, i, u, range) {
+    let enemy = null, eD = range;
+    const uSec = u.faction === 'def' ? sectionOf(u.pos) : -1;
+    const scan = (e, dx, dz) => {
+      if (!e.alive || e.faction === u.faction || e.zone !== u.zone) return;
+      if (u.faction === 'def' && u.zone === 'wall') {
+        if (sectionOf(e.pos) !== uSec && dx * dx + dz * dz > 110) return;
+      }
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d < eD) { eD = d; enemy = e; }
+    };
+    for (let j = i - 1; j >= 0; j--) {
+      const e = units[j];
+      const dx = u.pos.x - e.pos.x;
+      if (dx > eD) break; // เรียงแล้ว — ตัวที่ไกลกว่านี้ข้ามได้ทั้งก้อน
+      scan(e, dx, u.pos.z - e.pos.z);
+    }
+    for (let j = i + 1; j < units.length; j++) {
+      const e = units[j];
+      const dx = e.pos.x - u.pos.x;
+      if (dx > eD) break;
+      scan(e, dx, u.pos.z - e.pos.z);
+    }
+    return enemy;
+  }
+
+  nearestCityDefender(pos, radius) {
+    let best = null, bestD = radius;
+    // กองสำรอง + ทหารเมืองที่สละกำแพงลงมา (evacuees) ล้วนเป็นเป้าในเมือง
+    for (const sq of this.reserves.squads) {
+      for (const s of sq.soldiers) {
+        if (!s.alive || s.zone !== 'city') continue;
+        const d = pos.distanceTo(s.pos);
+        if (d < bestD) { bestD = d; best = s; }
+      }
+    }
+    for (const d of this.defenses) {
+      for (const s of d.melee) {
+        if (!s.alive || s.zone !== 'city') continue;
+        const dd = pos.distanceTo(s.pos);
+        if (dd < bestD) { bestD = dd; best = s; }
+      }
+    }
+    return best;
+  }
+
+  tryAttack(u, enemy, dt) {
+    if (!enemy) return;
+    u.facePoint(enemy.pos, dt);
+    if (u.cd <= 0) {
+      u.cd = u.atkCd;
+      u.attackAnim = 0.22;
+      // ยามเมืองยืนเกาะ "คอประตู" (last stand) — ได้เปรียบในการรับตรงปากประตู
+      let dmg = u.dmg;
+      if (u.faction === 'def' && this.gate.open && u.pos.distanceTo(gateInsidePoint()) < 9) dmg += 1;
+      enemy.damage(dmg);
+      _t2.copy(enemy.pos); _t2.y += 0.9;
+      this.spawnSpark(_t2, 'red', 2, 1.6);
+    }
+  }
+
+  clampToZone(u) {
+    if (u.zone === 'wall') { u.pos.y = CFG.walkY; clampOnWall(u.pos); }
+    else if (u.zone === 'city') {
+      u.pos.y = 0;
+      const m = Math.max(Math.abs(u.pos.x), Math.abs(u.pos.z));
+      if (m > CFG.wallHalf - 1 && !this.gate.open) {
+        u.pos.multiplyScalar((CFG.wallHalf - 1.2) / m);
+      }
+    } else {
+      u.pos.y = 0;
+      const m = Math.max(Math.abs(u.pos.x), Math.abs(u.pos.z));
+      if (m < CFG.wallHalf + CFG.wallThick + 0.6) u.pos.multiplyScalar((CFG.wallHalf + CFG.wallThick + 0.6) / m);
+    }
+  }
+
+  // ---------- ธนู (สองฝ่าย) ----------
+  // ตารางค้นหาเป้า (spatial hash ขนาดช่อง 8 ม.) — ธนูแต่ละเม็ดค้นเฉพาะ 3×3 ช่องรอบตัว
+  buildArrowGrids() {
+    this._gridG = new Map(); // ฝ่ายเมืองยิง → ทหารราบภาคสนาม
+    for (const s of this._ground) {
+      const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
+      let a = this._gridG.get(k);
+      if (!a) { a = []; this._gridG.set(k, a); }
+      a.push(s);
+    }
+    this._gridW = new Map(); // ฝ่ายบุกยิง → ทหารบนกำแพง + ในเมือง
+    for (const s of this.wallDefenders()) {
+      const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
+      let a = this._gridW.get(k);
+      if (!a) { a = []; this._gridW.set(k, a); }
+      a.push(s);
+    }
+    if (this.gate.open) {
+      for (const d of this.defenses) for (const s of d.melee) {
+        if (!s.alive || s.zone !== 'city') continue;
+        const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
+        let a = this._gridW.get(k);
+        if (!a) { a = []; this._gridW.set(k, a); }
+        a.push(s);
+      }
+      for (const sq of this.reserves.squads) for (const s of sq.soldiers) {
+        if (!s.alive || s.zone !== 'city') continue;
+        const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
+        let a = this._gridW.get(k);
+        if (!a) { a = []; this._gridW.set(k, a); }
+        a.push(s);
+      }
+    }
+  }
+
+  gridTargets(grid, p) {
+    const kx = Math.floor(p.x / 8) + 300, kz = Math.floor(p.z / 8) + 300;
+    const out = [];
+    for (let gx = kx - 1; gx <= kx + 1; gx++) {
+      for (let gz = kz - 1; gz <= kz + 1; gz++) {
+        const a = grid.get(gx + '|' + gz);
+        if (a) out.push(...a);
+      }
+    }
+    return out;
+  }
+
+  fireArrow(from, target, by) {
+    const start = _t1.copy(from.pos); start.y += 1.35;
+    const aim = _t2.copy(target.pos); aim.y += target.kind === 'cav' ? 1.2 : 0.9;
+    aim.x += (this.rng() - 0.5) * CFG.arrow.spread * 2;
+    aim.z += (this.rng() - 0.5) * CFG.arrow.spread * 2;
+    const dx = aim.x - start.x, dy = aim.y - start.y, dz = aim.z - start.z;
+    const dh = Math.hypot(dx, dz) || 0.001;
+    const v = by === 'atk' ? CFG.unit.atkArch.projSpeed : 27;
+    const g = CFG.unit.atkArch.gravity;
+    // บอลลิสติกส์เต็มรูป: แก้ทั้ง dh และ dy (ยิงขึ้นยอดกำแพงต้องโค้งข้ามใบกำแพง)
+    const v2 = v * v;
+    const disc = v2 * v2 - g * (g * dh * dh + 2 * dy * v2);
+    let ang;
+    if (disc < 0) {
+      ang = Math.PI / 4; // ไปไม่ถึง — โยนสูงสุดเท่าที่ได้
+    } else {
+      const high = dy > 2; // เป้าสูงกว่าตัวยิง → ใช้มุมโค้งสูง
+      const tanA = (v2 + (high ? 1 : -1) * Math.sqrt(disc)) / (g * dh);
+      ang = Math.atan(tanA);
+    }
+    const cosA = Math.cos(ang);
+    const a = this.getArrow();
+    a.mesh.position.copy(start);
+    a.vel.set((dx / dh) * cosA * v, Math.sin(ang) * v, (dz / dh) * cosA * v);
+    a.alive = true;
+    a.life = 0;
+    a.by = by;
+    a.mesh.visible = true;
+  }
+
+  getArrow() {
+    let a = this.arrows.find((x) => !x.alive);
+    if (!a) {
+      const mesh = new THREE.Mesh(arrowGeo, arrowMat);
+      this.group.add(mesh);
+      a = { mesh, vel: new THREE.Vector3(), alive: false, life: 0, by: 'def' };
+      this.arrows.push(a);
+    }
+    return a;
+  }
+
+  updateArrows(dt) {
+    const shields = this.liveShields();
+    for (const a of this.arrows) {
+      if (!a.alive) continue;
+      a.life += dt;
+      // ย่อยเป็น substep กันธนู "กระโดด" ทะลุโซนชนเมื่อ dt ใหญ่ (4x เร่งเวลา)
+      const steps = 4;
+      const sdt = dt / steps;
+      for (let st = 0; st < steps && a.alive; st++) {
+        a.vel.y -= CFG.unit.atkArch.gravity * sdt;
+        a.mesh.position.addScaledVector(a.vel, sdt);
+        const p = a.mesh.position;
+        let hit = false;
+        const targets = this.gridTargets(a.by === 'atk' ? this._gridW : this._gridG, p);
+        const hitR2 = a.by === 'atk' ? 0.7 : 0.5;
+        for (const s of targets) {
+          const dx = p.x - s.pos.x, dy = p.y - (s.pos.y + 0.9), dz = p.z - s.pos.z;
+          if (dx * dx + dy * dy + dz * dz < hitR2) {
+            // โล่กำบัง: มีพลโล่ใกล้เป้า → โอกาสสะท้อน
+            if (this.covered(s, shields) && this.rng() < CFG.unit.shield.coverChance) {
+              this.spawnSpark(p, 'gray', 2, 1.6);
+            } else {
+              s.damage(a.by === 'atk' ? CFG.arrow.dmgWall : CFG.arrow.dmg);
+              this.spawnSpark(p, 'red', 2, 1.4);
+              if (a.by === 'atk') this.stats.arrowHitsAtk = (this.stats.arrowHitsAtk || 0) + 1;
+            }
+            hit = true;
+            break;
+          }
+        }
+        if (hit) { a.alive = false; a.mesh.visible = false; break; }
+        const ax = Math.abs(p.x), az = Math.abs(p.z);
+        if (p.y < 0.05 || (Math.max(ax, az) < CFG.wallHalf + CFG.wallThick && p.y < CFG.walkY - 0.3) || a.life > 7) {
+          a.alive = false; a.mesh.visible = false;
+        }
+      }
+      if (a.alive) {
+        a.mesh.lookAt(_t1.copy(a.mesh.position).add(a.vel));
+      }
+    }
+  }
+
+  // ---------- หินกลิ้งลงบันได ----------
+  spawnRock(ladder) {
+    const r = this.getRock();
+    r.alive = true;
+    r.ladder = ladder;
+    r.ramTarget = null;
+    r.s = 0.4;
+    r.speed = CFG.rock.speed0;
+    r.mid = false;
+    r.passed.clear();
+    r.mesh.visible = true;
+    r.mesh.position.copy(ladder.top);
+  }
+
+  dropRockOnRam(ramCompany) {
+    const r = this.getRock();
+    r.alive = true;
+    r.ladder = null;
+    r.ramTarget = ramCompany;
+    r.s = 0;
+    r.speed = 16;
+    r.mesh.visible = true;
+    r.mesh.position.copy(ramCompany.anchor).setY(CFG.wallH + 6);
+  }
+
+  getRock() {
+    let r = this.rocks.find((x) => !x.alive);
+    if (!r) {
+      const mesh = new THREE.Mesh(rockGeo, rockMat);
+      mesh.castShadow = true;
+      this.group.add(mesh);
+      r = { mesh, ladder: null, ramTarget: null, s: 0, speed: 0, alive: false, mid: false, passed: new Set() };
+      this.rocks.push(r);
+    }
+    return r;
+  }
+
+  updateRocks(dt) {
+    for (const r of this.rocks) {
+      if (!r.alive) continue;
+      // หินจากหอประตู ทุ่มใส่รถทุบ
+      if (r.ramTarget) {
+        r.mesh.position.y -= r.speed * dt;
+        r.mesh.rotation.x += dt * 9;
+        const p = r.mesh.position;
+        if (p.y <= 1.4) {
+          r.alive = false;
+          r.mesh.visible = false;
+          this.spawnSpark(p, 'dust', 5, 2.5);
+          sfx.crack();
+          this.shake = Math.max(this.shake, 0.35);
+          const c = r.ramTarget;
+          if (c.ramMesh && c.aliveSoldiers.length > 0) {
+            c.ramHp -= CFG.unit.ram.rockDmg;
+            for (const s of c.aliveSoldiers) if (s.pos.distanceTo(p) < 2.4) s.damage(2);
+            if (c.ramHp <= 0) c.onRamDestroyed();
+          }
+          continue;
+        }
+        continue;
+      }
+      const l = r.ladder;
+      r.speed += CFG.rock.accel * dt;
+      r.s += r.speed * dt;
+      r.mesh.position.copy(l.top).addScaledVector(l.dir, -r.s);
+      r.mesh.rotation.x += dt * 9;
+      r.mesh.rotation.z += dt * 7;
+      for (const c of l.climbers) {
+        if (!c.alive || r.passed.has(c)) continue;
+        if (Math.abs(c.climb.s - r.s) < CFG.rock.killRadius) {
+          r.passed.add(c);
+          if (this.rng() < CFG.rock.killChance) {
+            c.die();
+            this.spawnSpark(c.pos, 'dust', 3, 2.0);
+          }
+        }
+      }
+      if (!r.mid && !l.broken && r.s > l.len * 0.45) {
+        r.mid = true;
+        if (this.rng() < CFG.ladder.breakChance) this.breakLadder(l);
+      }
+      if (r.s >= l.len) {
+        r.alive = false;
+        r.mesh.visible = false;
+        this.spawnSpark(l.base, 'dust', 6, 3.0);
+        sfx.thud();
+        this.shake = Math.max(this.shake, 0.45);
+        for (const s of this._ground) {
+          if (s.alive && s.pos.distanceTo(l.base) < CFG.rock.baseKillRadius) s.damage(2);
+        }
+      }
+    }
+  }
+
+  breakLadder(l) {
+    if (l.broken) return;
+    const company = this.companies.find((c) => c.ladder === l);
+    this.fallingLadders.push({ mesh: l.mesh, quat0: l.mesh.quaternion.clone(), axis: SIDE_VECS[l.side].t.clone(), t: 0 });
+    this.spawnSpark(l.top, 'wood', 6, 2.5);
+    sfx.crack();
+    this.shake = Math.max(this.shake, 1.0);
+    if (company) company.onLadderBroken();
+    this.onEvent('ladder_broken', { side: l.side });
+  }
+
+  updateFallingLadders(dt) {
+    for (const f of this.fallingLadders) {
+      f.t += dt;
+      const k = Math.min(1, f.t / 0.7);
+      _q.setFromAxisAngle(f.axis, k * 1.35);
+      f.mesh.quaternion.copy(_q).multiply(f.quat0);
+      if (f.t > 1.6) { this.group.remove(f.mesh); f.done = true; }
+    }
+    this.fallingLadders = this.fallingLadders.filter((f) => !f.done);
+  }
+
+  // ---------- ประกายไฟ ----------
+  spawnSpark(pos, kind, n, speed) {
+    for (let i = 0; i < n; i++) {
+      let sp = this.sparks.find((x) => !x.alive);
+      if (!sp) {
+        const mesh = new THREE.Mesh(sparkGeo, SPARK_MATS.dust);
+        this.group.add(mesh);
+        sp = { mesh, vel: new THREE.Vector3(), life: 0, alive: false };
+        this.sparks.push(sp);
+      }
+      sp.alive = true;
+      sp.mesh.visible = true;
+      sp.mesh.material = SPARK_MATS[kind] || SPARK_MATS.dust;
+      sp.mesh.position.copy(pos);
+      sp.vel.set((this.rng() - 0.5) * speed, this.rng() * speed * 0.9 + 0.6, (this.rng() - 0.5) * speed);
+      sp.life = 0.35 + this.rng() * 0.3;
+      sp.mesh.scale.setScalar(1);
+    }
+  }
+
+  updateSparks(dt) {
+    for (const s of this.sparks) {
+      if (!s.alive) continue;
+      s.life -= dt;
+      if (s.life <= 0) { s.alive = false; s.mesh.visible = false; continue; }
+      s.vel.y -= 7 * dt;
+      s.mesh.position.addScaledVector(s.vel, dt);
+      s.mesh.scale.setScalar(Math.max(0.15, s.life * 2.2));
+    }
+  }
+
+  // ---------- รถทุบประตู + ประตู ----------
+  updateRam(dt) {
+    if (this.gate.open) return;
+    // ประตูเป็นจุดเดียว — ความเร็วทุบไม่ซ้อนกัน (ใช้คันที่พร้อมที่สุด)
+    const rams = this.companies.filter((c) => c.ctype === 'ram' && c.state === 'battering' && c.aliveSoldiers.length > 0);
+    if (rams.length > 0) {
+      this.gate.breach = Math.min(1, this.gate.breach + CFG.unit.ram.batterRate * dt);
+      if (this.gate.breach >= 1) {
+        this.gate.open = true;
+        this.shake = Math.max(this.shake, 1.6);
+        this.onEvent('gate_breached', {});
+      }
+    }
+  }
+
+  updateGate(dt) {
+    if (this.gate.open) {
+      if (this.gate.anim < 1) {
+        this.gate.anim = Math.min(1, this.gate.anim + dt / 2.4);
+        openGateDoors(this.doorL, this.doorR, this.gate.anim);
+      }
+      return;
+    }
+    if (this.gate.progress >= 1) return;
+    const gi = gateInsidePoint();
+    let n = 0;
+    for (const s of this.cityAttackers) {
+      if (s.alive && s.kind === 'inf' && s.pos.distanceTo(gi) < CFG.gate.openRadius) n++;
+    }
+    if (n > 0) {
+      if (!this.gate.started) { this.gate.started = true; this.onEvent('gate_opening', {}); }
+      this.gate.progress = Math.min(1, this.gate.progress + dt * (CFG.gate.insideBase + CFG.gate.insidePer * Math.min(10, n)));
+      if (this.gate.progress >= 1) {
+        this.gate.open = true;
+        this.onEvent('gate_open', {});
+        for (const c of this.companies) {
+          if (c.kind === 'cav' && c.waitingGate && c.pendingCityTarget) {
+            c.waitingGate = false;
+            c.orderRide(c.pendingCityTarget);
+          }
+        }
+      }
+    }
+  }
+
+  // ---------- ม้าซอง: เมืองส่งม้าออกไปถล่มนักธนู/รถทุบ แล้วถอยกลับ ----------
+  updateSally(dt) {
+    const S = this.sally;
+    if (S.active) {
+      S.t += dt;
+      const alive = S.horses.filter((h) => h.alive);
+      const retreating = S.t > CFG.sortie.duration || alive.length < CFG.sortie.retreatBelow;
+      for (const h of alive) {
+        if (h.alive && !h.inCombat) {
+          const target = retreating ? gateInsidePoint() : (S.target ? S.target.flagPos : gateInsidePoint());
+          h.stepToward(dt, target, CFG.sortie.speed, 1.6);
+        }
+      }
+      if (retreating && (alive.length === 0 || alive.every((h) => h.pos.distanceTo(gateInsidePoint()) < 3))) {
+        for (const h of alive) { this.group.remove(h.mesh); h.alive = false; }
+        S.horses = [];
+        S.active = false;
+        S.cooldown = CFG.sortie.cooldown;
+        this.onEvent('sortie_return', {});
+      }
+      return;
+    }
+    S.cooldown -= dt;
+    if (S.cooldown > 0 || this.gate.open || this.captured[2]) return;
+    if (this.reserves.aliveCount() < CFG.sortie.minReserves) return;
+    // มีเครื่องโจมตีตั้งหลักแหล่งใกล้ประตูหรือไม่ (นักธนู / รถทุบ)
+    let prey = null, preyD = CFG.sortie.triggerRange;
+    for (const c of this.companies) {
+      if ((c.ctype === 'archer' && c.state === 'volley') || (c.ctype === 'ram' && c.state === 'battering')) {
+        const d = c.flagPos.distanceTo(gateInsidePoint());
+        if (d < preyD) { preyD = d; prey = c; }
+      }
+    }
+    if (!prey) return;
+    // ออกซอง!
+    S.active = true;
+    S.t = 0;
+    S.target = prey;
+    S.horses = [];
+    const front = worldPoint(2, 0, CFG.gate.frontPoint, 0);
+    for (let i = 0; i < CFG.sortie.horses; i++) {
+      const h = new Soldier({
+        type: 'cavD', faction: 'def', side: -1, kind: 'cav', utype: 'sally',
+        hp: CFG.sortie.hp, speed: CFG.sortie.speed, atkCd: CFG.sortie.atkCd, dmg: CFG.sortie.dmg,
+      });
+      h.pos.copy(front).addScaledVector(SIDE_VECS[2].t, (i - CFG.sortie.horses / 2) * 1.6);
+      h.state = 'order';
+      this.group.add(h.mesh);
+      h.syncMesh(0);
+      S.horses.push(h);
+    }
+    this.onEvent('sortie', { n: CFG.sortie.horses });
+  }
+
+  // ---------- ยึดกำแพง ----------
+  defendersOn(side) {
+    const res = [];
+    for (const s of this.defenses[side].melee) if (s.alive && sectionOf(s.pos) === side) res.push(s);
+    for (const s of this.defenses[side].archers) if (s.alive && sectionOf(s.pos) === side) res.push(s);
+    return res;
+  }
+
+  updateCapture(dt) {
+    for (let s = 0; s < 4; s++) {
+      if (this.captured[s]) continue;
+      let atk = 0;
+      for (const f of this.wallFighters[s]) if (f.alive) atk++;
+      const def = this.defendersOn(s).length;
+      if (atk >= CFG.captureSoldiersNeeded && def === 0) {
+        this.capT[s] += dt;
+        if (this.capT[s] >= CFG.captureHoldTime) {
+          this.captured[s] = true;
+          this.stats.capturedCount++;
+          this.citySides[s].flagMat.color.set(0x3d7ac0);
+          this.spawnSpark(sectionCenter(s), 'blue', 10, 4);
+          this.shake = Math.max(this.shake, 0.7);
+          this.onEvent('captured', { side: s });
+        }
+      } else {
+        this.capT[s] = Math.max(0, this.capT[s] - dt * 1.5);
+      }
+    }
+  }
+
+  // ---------- จบศึก ----------
+  checkEnd() {
+    let defendersAlive = this.defenses.reduce((a, d) => a + d.aliveCount(), 0) + this.reserves.aliveCount();
+    for (const h of this.sally.horses) if (h.alive) defendersAlive++;
+    let attackersAlive = 0;
+    for (const c of this.companies) for (const s of c.soldiers) if (s.alive) attackersAlive++;
+    this.stats.attackersAlive = attackersAlive;
+    this.stats.defendersTotal = defendersAlive;
+    if (defendersAlive === 0 && this.gate.open) { this.end('win'); return; }
+    if (attackersAlive === 0) { this.end('lose_dead'); return; }
+    if (this.time > CFG.timeLimit) this.end('lose_time');
+  }
+
+  end(result) {
+    this.ended = true;
+    this.result = result;
+    this.onEvent('end', { result, stats: { ...this.stats }, captured: [...this.captured], time: this.time });
+  }
+
+  // ---------- ภาพ / ทำความสะอาด ----------
+  syncMeshes(dt) {
+    const fieldStates = ['idle', 'hold', 'march', 'ride', 'holdAt', 'waitBase', 'toLadder', 'volley', 'battering', 'order'];
+    for (const c of this.companies) {
+      for (const s of c.soldiers) s.syncMesh(dt);
+      const dead = c.aliveSoldiers.length === 0;
+      if (dead && c.selected) { c.selected = false; this.selection.delete(c); }
+      c.selRing.visible = c.selected && !dead && fieldStates.includes(c.state);
+      if (c.selRing.visible) {
+        const p = c.flagPos;
+        c.selRing.position.set(p.x, 0.07, p.z);
+      }
+    }
+    for (const d of this.defenses) {
+      for (const s of d.melee) s.syncMesh(dt);
+      for (const s of d.archers) s.syncMesh(dt);
+      for (const c of d.carriers) c.s.syncMesh(dt);
+    }
+    for (const sq of this.reserves.squads) for (const s of sq.soldiers) s.syncMesh(dt);
+    for (const h of this.sally.horses) h.syncMesh(dt);
+    this.hoverRing.visible = !!(this.hover && !this.hover.selected && this.hover.aliveSoldiers.length > 0 && fieldStates.includes(this.hover.state));
+    if (this.hoverRing.visible) {
+      const p = this.hover.flagPos;
+      this.hoverRing.position.set(p.x, 0.06, p.z);
+    }
+  }
+
+  cleanup() {
+    const reap = (s, isDef) => {
+      if (!s.alive && s.state === 'dying' && s.dieT > 4.0) {
+        s.state = 'dead';
+        this.group.remove(s.mesh);
+        if (!s.counted) { s.counted = true; if (isDef) this.stats.kills++; else this.stats.losses++; }
+      }
+    };
+    for (const c of this.companies) for (const s of c.soldiers) reap(s, false);
+    for (const d of this.defenses) {
+      for (const s of d.melee) reap(s, true);
+      for (const s of d.archers) reap(s, true);
+      for (const c of d.carriers) reap(c.s, true);
+    }
+    for (const sq of this.reserves.squads) for (const s of sq.soldiers) reap(s, true);
+    for (const h of this.sally.horses) reap(h, true);
+    for (const set of this.wallFighters) {
+      for (const s of [...set]) if (s.state === 'dead') set.delete(s);
+    }
+    for (const s of [...this.cityAttackers]) if (s.state === 'dead') this.cityAttackers.delete(s);
+    for (let i = this.markers.length - 1; i >= 0; i--) {
+      const m = this.markers[i];
+      m.t += 0.016;
+      m.mesh.scale.setScalar(1 + m.t * 2.5);
+      m.mesh.material.opacity = Math.max(0, 0.9 - m.t * 1.6);
+      if (m.t > 0.6) { this.group.remove(m.mesh); m.mesh.material.dispose(); this.markers.splice(i, 1); }
+    }
+  }
+
+  // ข้อมูลสำหรับ HUD
+  sideInfo(side) {
+    const d = this.defenses[side];
+    let onWall = 0, inCity = 0;
+    for (const f of this.wallFighters[side]) if (f.alive) onWall++;
+    for (const s of this.cityAttackers) if (s.alive && s.side === side) inCity++;
+    return {
+      captured: this.captured[side],
+      capProgress: Math.min(1, this.capT[side] / CFG.captureHoldTime),
+      onWall,
+      inCity,
+      descending: this.stairs[side].down.length,
+      defendersWall: d.aliveMelee(),
+      pile: d.rock.pile,
+      pileMax: CFG.rockLogi.pileMax,
+      stock: d.rock.stock,
+      pattern: d.cfg.pattern.name,
+      reinforceMen: this.reserves.enRouteMen(),
+    };
+  }
+
+  globalInfo() {
+    let attackersAlive = 0;
+    for (const c of this.companies) for (const s of c.soldiers) if (s.alive) attackersAlive++;
+    return {
+      defendersAlive: this.defenses.reduce((a, d) => a + d.aliveCount(), 0) + this.reserves.aliveCount() + this.sally.horses.filter((h) => h.alive).length,
+      defendersInitial: this.stats.defendersInitial,
+      reserves: this.reserves.aliveCount(),
+      attackersAlive,
+      attackersTotal: this.stats.deployedTotal,
+      capturedCount: this.captured.filter(Boolean).length,
+      gate: this.gate,
+    };
+  }
+
+  destroy(scene) {
+    scene.remove(this.group);
+  }
+}

@@ -1,0 +1,10 @@
+# ศึกล้อมเมืองมังกร — เดปลอยด้วย Dokploy (หรือ docker compose up -d ก็ได้)
+services:
+  battle-war:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: battle-war
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:80"

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>ศึกล้อมเมืองมังกร — เกมสั่งทัพตีเมือง</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <div id="selbox"></div>
+
+  <!-- Intro -->
+  <div id="intro" class="overlay">
+    <div class="modal">
+      <div class="modal-title">⚔️ ศึกล้อมเมืองมังกร</div>
+      <div class="modal-sub">เกมสั่งทัพตีเมือง — สงครามจีนโบราณ 3D Low Poly</div>
+      <p>เจ้าคือแม่ทัพฝ่ายโจมตี ทัพเมืองมี <b>192 นาย</b> (หอกเต็มกำแพง + กองสำรองข้างใน) — เป้าหมาย: <b>ล้างทัพเมืองให้หมดและเปิดประตูให้ได้ใน 8 นาที</b> — เมืองฉลาด ปรับยุทธวิธีได้ รุมแบบไม่คิด = ทัพแตกแน่นอน</p>
+      <div class="legend">
+        <div><span class="dot red"></span><b>หอก (5 กอง×4 ด้าน)</b> — แบกบันได ปีน ปะทะ หัวใจการตีเมือง</div>
+        <div><span class="dot bronze"></span><b>พลโล่ (2 กอง×4)</b> — เดินช้าแต่กันธนูให้ทัพรอบข้าง (72%) ไต่กำแพงทนกว่า</div>
+        <div><span class="dot green"></span><b>นักธนู (2 กอง×4)</b> — ยิงกดทหารบนกำแพงจากระยะ 62 ม. ทำให้เมืองเบามือ — แต่เปราะ ระวังม้าซอง</div>
+        <div><span class="dot dark"></span><b>รถทุบ (1 คัน×4 ด้าน)</b> — เดินไปทุบประตูใต้ ~50 วิ (หินจากหอประตูกระหน่ำใส่!)</div>
+        <div><span class="dot gold"></span><b>ทหารม้า (4 กอง)</b> — เข้าเมืองทางประตูเท่านั้น ไว้ไล่ล่าเก็บกวาด</div>
+      </div>
+      <ul>
+        <li>🖱️ <b>ลากซ้ายเลือกกอง</b> (Shift เพิ่ม) → <b>คลิกขวาสั่ง</b>: หน้ากำแพง = โจมตี / กลางทุ่ง = หลอกล่อ / ในเมือง = สั่งม้าบุก</li>
+        <li>🪨 กองหินบนกำแพง<b>มีจำกัด</b> — พลขนหินต้องแบกขึ้นจากคลังข้างใน กดดันต่อเนื่องเมื่อไหร่ หินจะไปไม่ทัน</li>
+        <li>🧠 ผู้บัญชาการเมืองจะ<b>เสริมกำลังข้ามด้าน สลับเป้าหิน และส่งม้าซอง</b>ออกไปฟันนักธนู/รถทุบของเจ้า — ต้องมีหอกคุมนักธนูไว้</li>
+        <li>⏱️ กำลังเสริมเมืองใช้เวลาเดินทาง — จังหวะ "ระหว่างเสริม" คือโอกาสทอง อย่ารุมพร้อมกันหมดเพราะเมืองจะรับได้ทุกด้าน</li>
+      </ul>
+      <p class="dim">🖥️ เมาส์: ลากซ้าย = เลือกกอง · คลิกขวา = สั่งทัพ · ลากขวา = หมุนกล้อง · ล้อเมาส์ = ซูม · 1-4 = มุมด้าน · 0 = มุมกว้าง · Space = พัก · Esc = ยกเลิกเลือก</p>
+      <p class="dim">📱 มือถือ: แตะกอง = เลือก · เลือกแล้วแตะที่กำแพง = สั่งโจมตี · แตะทุ่ง = หลอกล่อ · ปุ่ม 🔲 = ลากครอบเลือก · ลากนิ้วเดียว = หมุนกล้อง · บีบสองนิ้ว = ซูม · แตะการ์ดด้าน = มุมกล้อง</p>
+      <button id="btn-intro-start" class="btn primary big">🎺 เปิดฉากศึก</button>
+    </div>
+  </div>
+
+  <!-- Battle HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="hud-timer">⏱ <span id="hud-time">0:00</span></div>
+      <div class="hud-objective" id="hud-objective"></div>
+      <div class="hud-speed">
+        <button data-speed="0" class="btn spd">⏸</button>
+        <button data-speed="1" class="btn spd active">▶ 1x</button>
+        <button data-speed="2" class="btn spd">▶▶ 2x</button>
+        <button data-speed="4" class="btn spd">▶▶▶ 4x</button>
+        <button id="btn-sound" class="btn spd" title="เปิด/ปิดเสียง">🔊</button>
+        <button id="btn-abort" class="btn danger">ธงขาว</button>
+      </div>
+    </div>
+
+    <div id="hud-cards"></div>
+
+    <div class="hud-global">
+      <div id="hud-gate">
+        <div class="gline">🚪 ประตูเมือง — <b id="hud-gate-text">ปิด</b></div>
+        <div class="capbar"><div></div></div>
+      </div>
+      <div class="gline" id="hud-reserves"></div>
+      <div class="gline" id="hud-sel-text"></div>
+      <div class="legend-mini">
+        <span><span class="dot red"></span>หอก</span>
+        <span><span class="dot bronze"></span>โล่</span>
+        <span><span class="dot green"></span>ธนู</span>
+        <span><span class="dot dark"></span>รถทุบ</span>
+        <span><span class="dot gold"></span>ม้า</span>
+      </div>
+    </div>
+
+    <div class="hud-hint" id="hud-hint">ลากซ้าย = เลือกกอง · คลิกขวา = สั่งทัพ · ลากขวา = หมุนกล้อง · ล้อเมาส์ = ซูม · 1-4 = มุมด้าน</div>
+
+    <!-- แถบควบคุมสำหรับจอสัมผัส -->
+    <div id="touchbar" class="hidden">
+      <div class="tb-group">
+        <button id="tb-box" class="btn tb" title="ลากครอบเลือกกอง">🔲</button>
+        <button id="tb-clear" class="btn tb" title="ยกเลิกการเลือก">✖</button>
+      </div>
+      <div class="tb-group">
+        <button id="tb-rl" class="btn tb" title="หมุนกล้องซ้าย">↺</button>
+        <button id="tb-rr" class="btn tb" title="หมุนกล้องขวา">↻</button>
+        <button id="tb-zi" class="btn tb" title="ซูมเข้า">➕</button>
+        <button id="tb-zo" class="btn tb" title="ซูมออก">➖</button>
+        <button id="tb-wide" class="btn tb" title="มุมกว้าง">🎬</button>
+      </div>
+    </div>
+
+    <div id="toasts"></div>
+  </div>
+
+  <!-- End screen -->
+  <div id="end" class="overlay hidden">
+    <div class="modal">
+      <div class="modal-title" id="end-title"></div>
+      <div class="modal-sub" id="end-sub"></div>
+      <div id="end-stats" class="end-stats"></div>
+      <div class="row">
+        <button id="btn-end-retry" class="btn primary">🔄 ลองศึกนี้อีกครั้ง</button>
+        <button id="btn-end-newmission" class="btn">🎲 ภารกิจใหม่</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
