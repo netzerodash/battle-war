@@ -26,6 +26,16 @@ test('mission RNG repeats exactly for the same seed', () => {
   assert.deepEqual(Array.from({ length: 20 }, a), Array.from({ length: 20 }, b));
 });
 
+test('large battle doubles both starting armies', () => {
+  const attackerInfantry = CFG.army.composition.length * 4 * 10;
+  const attackerRams = CFG.army.ramCompanies * CFG.unit.ram.crew;
+  const attackerCavalry = CFG.army.cavalryCompanies * CFG.army.cavalryPerCompany;
+  const defenders = 4 * (CFG.wallMelee + CFG.wallArchers + CFG.rockLogi.carriers)
+    + CFG.reserveSquads * CFG.squadSize;
+  assert.equal(attackerInfantry + attackerRams + attackerCavalry, 1956);
+  assert.equal(defenders, 1312);
+});
+
 test('a multi-company order gives every company a distinct destination', () => {
   const companies = Array.from({ length: 9 }, (_, i) => ({ anchor: new THREE.Vector3(i, 0, 90) }));
   const points = formationDestinations(companies, new THREE.Vector3(0, 0, 70));

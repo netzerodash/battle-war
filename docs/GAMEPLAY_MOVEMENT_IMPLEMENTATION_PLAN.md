@@ -19,7 +19,7 @@
 - Milestone 4: มี engagement slots/claims จำกัดผู้รุมเป้าหมาย
 - Milestone 5: มี 4 formations, 3 stances, archer hold-fire, cavalry charge/retreat และคำสั่งหลังยึดกำแพง
 - Milestone 6: selection status, contextual company health bars, combat focus และ per-side reinforcement แสดงแล้ว
-- Milestone 7: ลด standard battle จากประมาณ 2,840 เหลือประมาณ 1,634 ตัวรวมสองฝ่าย และปรับ ram/gate duty จาก telemetry
+- Milestone 7: large battle ปัจจุบันเพิ่มเป็นประมาณ 3,268 ตัวรวมสองฝ่าย และปรับ ram/gate duty จาก telemetry
 - Validation: automated rules 28 cases ผ่าน, production build ผ่าน และ browser smoke test พบ wall violation 0, stuck company 0, initial overlap 0
 
 ## Baseline ปัจจุบัน
@@ -27,7 +27,7 @@
 - Stack: Three.js + Vite, JavaScript modules, fixed simulation step 30 Hz
 - Baseline ณ วันที่ทำแผน: `npm test` ผ่าน 15/15 และ `npm run build` ผ่าน
 - มีระบบ formation destination, unit slots, cross-side assault route, gate route, wall route, wall capture, city pursuit, gate HP, double-click selection และ soldier camera แล้ว
-- standard battle เริ่มต้นประมาณ 1,634 ตัวรวมสองฝ่าย หลังลดจาก baseline เดิมประมาณ 2,840 ตัวเพื่อให้แนวรบอ่านง่ายขึ้น
+- large battle เริ่มต้นประมาณ 3,268 ตัวรวมสองฝ่าย (ฝ่ายบุก 1,956 / ฝ่ายเมือง 1,312)
 - ไฟล์หลัก:
   - `src/battle.js`: orchestration, combat, wall/city/field updates, orders, ram, capture
   - `src/company.js`: company state machine และการเดินตาม formation slot

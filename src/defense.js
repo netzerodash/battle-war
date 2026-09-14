@@ -37,9 +37,13 @@ export class DefenseSide {
     this.roller.visual.castShadow = true;
     battle.group.add(this.roller.visual);
 
+    const meleePerRank = 40;
     for (let i = 0; i < cfg.melee; i++) {
-      const t = -33 + (i + 0.5) * (66 / cfg.melee);
-      this.melee.push(this.makeSoldier('def', CFG.defender, worldPoint(side, t, 45.9, CFG.walkY)));
+      const rank = Math.floor(i / meleePerRank);
+      const indexInRank = i % meleePerRank;
+      const rankCount = Math.min(meleePerRank, cfg.melee - rank * meleePerRank);
+      const t = -33 + (indexInRank + 0.5) * (66 / rankCount);
+      this.melee.push(this.makeSoldier('def', CFG.defender, worldPoint(side, t, 45.9 - rank * 2.1, CFG.walkY)));
     }
     for (let i = 0; i < cfg.archers; i++) {
       const t = -35 + (i + 0.5) * (70 / cfg.archers);
@@ -98,9 +102,10 @@ export class DefenseSide {
   }
 
   stockPoint(slot = 0) {
-    const lateral = ((slot % 5) - 2) * 2.1;
-    const depth = 28 - Math.floor(slot / 5) * 2.1;
-    return worldPoint(this.side, lateral, depth, 0);
+    // Keep the doubled logistics crew in one visible line beside the inner wall.
+    // This also leaves the central courtyard free for the reserve formation.
+    const lateral = (slot - (CFG.rockLogi.carriers - 1) / 2) * 1.8;
+    return worldPoint(this.side, lateral, 37.2, 0);
   }
   pilePoint() { return worldPoint(this.side, 2.5, 44.5, CFG.walkY); }
 

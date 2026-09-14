@@ -135,7 +135,7 @@ export class Battle {
     this._ground = [];
     this.sally = { active: false, cooldown: 25, horses: [], t: 0, target: null };
     this.shake = 0; // ความแรงจอสั่น (decay เอง)
-    this.wallSupportLimit = 14;
+    this.wallSupportLimit = 28;
     this.commandFormation = 'line';
     this.commandStance = 'aggressive';
     this.movementGrid = new SpatialHash(CFG.movement.spatialCell);
@@ -148,7 +148,7 @@ export class Battle {
     this.lastCombatAt = -Infinity;
     this.stats = { kills: 0, losses: 0, rocksUsed: 0, attackersAlive: 0, deployedTotal: 0, defendersTotal: 0, defendersInitial: 0, capturedCount: 0 };
 
-    // ทัพโจมตี: ด้านละ 36 กอง (หอก20 โล่8 ธนู8) + รถทุบเฉพาะด้านใต้ + กองม้า
+    // ทัพโจมตี: ด้านละ 44 กอง (หอก24 โล่12 ธนู8) + รถทุบเฉพาะด้านใต้ + กองม้า
     for (let side = 0; side < 4; side++) {
       CFG.army.composition.forEach((ctype, i) => {
         const col = (i % 8) - 3.5, row = Math.floor(i / 8);
@@ -156,13 +156,15 @@ export class Battle {
         this.companies.push(new Company(i, side, ctype, anchor, this));
       });
     }
+    const infantryDepth = CFG.spawnDist + Math.ceil(CFG.army.composition.length / 8) * 10;
+    const ramDepth = infantryDepth + 12;
     for (let i = 0; i < CFG.army.ramCompanies; i++) {
-      const anchor = worldPoint(2, (i - (CFG.army.ramCompanies - 1) / 2) * 12, CFG.spawnDist + 52, 0);
+      const anchor = worldPoint(2, (i - (CFG.army.ramCompanies - 1) / 2) * 12, ramDepth, 0);
       this.companies.push(new Company(i, 2, 'ram', anchor, this));
     }
     for (let i = 0; i < CFG.army.cavalryCompanies; i++) {
       const col = i % 8, row = Math.floor(i / 8);
-      const anchor = worldPoint(2, (col - 3.5) * 13, CFG.spawnDist + 66 + row * 15, 0);
+      const anchor = worldPoint(2, (col - 3.5) * 13, ramDepth + 18 + row * 15, 0);
       this.companies.push(new Company(i, 2, 'cav', anchor, this));
     }
     this.stats.deployedTotal = this.companies.reduce((a, c) => a + c.soldiers.length, 0);
