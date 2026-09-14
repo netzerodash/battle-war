@@ -49,6 +49,7 @@ export function updateHUD(els, battle) {
   document.body.dataset.gameTime = battle.time.toFixed(1);
   document.body.dataset.wallViolations = String(battle.metrics.wallViolations);
   document.body.dataset.overlapPairs = String(battle.metrics.overlapPairs);
+  document.body.dataset.chokeOverlapPairs = String(battle.metrics.chokeOverlapPairs);
   document.body.dataset.stuckCompanies = String(battle.metrics.stuckCompanies);
   document.body.dataset.maxAttackersPerTarget = String(battle.metrics.maxAttackersPerTarget);
   els.time.textContent = fmtTime(battle.time);

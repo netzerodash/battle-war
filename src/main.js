@@ -201,6 +201,9 @@ function startBattle(rerollMission) {
   city.sides.forEach((s) => s.flagMat.color.set(0xb03030));
   openGateDoors(city.doorL, city.doorR, 0);
   battle = new Battle(mission, scene, city, onBattleEvent);
+  // Keep a new battle in sync with the tactical controls the player can already see.
+  battle.commandFormation = formationSelect.value;
+  battle.commandStance = stanceSelect.value;
   inspectedSoldier = null;
   unitViewSoldier = null;
   unitViewButton.disabled = true;

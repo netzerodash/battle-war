@@ -12,7 +12,8 @@ import { fieldRoute, routeLength } from '../src/navigation.js';
 import { createOrder, ORDER_KIND, orderKindFromContext } from '../src/orders.js';
 import { SpatialHash } from '../src/spatial-hash.js';
 import { EngagementRegistry } from '../src/engagement.js';
-import { ReserveForce } from '../src/defense.js';
+import { DefenseSide, ReserveForce } from '../src/defense.js';
+import { chooseTacticalTarget, targetScore } from '../src/tactical-ai.js';
 
 test('victory requires both no defenders and an open gate', () => {
   const base = { defendersAlive: 0, attackersAlive: 1, time: 10, timeLimit: 20 };
@@ -212,4 +213,80 @@ test('wall reinforcement count is reported per side', () => {
   assert.equal(ReserveForce.prototype.enRouteMen.call(reserves, 0), 2);
   assert.equal(ReserveForce.prototype.enRouteMen.call(reserves, 1), 2);
   assert.equal(ReserveForce.prototype.enRouteMen.call(reserves), 4);
+});
+
+test('rock carriers have distinct visible staging positions', () => {
+  const defense = { side: 2 };
+  const positions = Array.from({ length: CFG.rockLogi.carriers }, (_, slot) =>
+    DefenseSide.prototype.stockPoint.call(defense, slot));
+  assert.equal(new Set(positions.map((p) => `${p.x.toFixed(2)}|${p.z.toFixed(2)}`)).size, positions.length);
+  for (let i = 0; i < positions.length; i++) for (let j = i + 1; j < positions.length; j++) {
+    assert.ok(positions[i].distanceTo(positions[j]) >= CFG.movement.infantryRadius * 2);
+  }
+});
+
+test('routes leaving the city use the open gate portal', () => {
+  const from = new THREE.Vector3(0, 0, 0);
+  const target = new THREE.Vector3(0, 0, -90);
+  const route = fieldRoute(from, target, [0, 0, 0, 0], true);
+  assert.ok(route[0].distanceTo(new THREE.Vector3(0, 0, CFG.gate.insidePoint)) < 0.01);
+  assert.ok(route[1].distanceTo(new THREE.Vector3(0, 0, CFG.gate.frontPoint)) < 0.01);
+});
+
+test('cavalry tactical AI prioritizes exposed archers over generic infantry', () => {
+  const attacker = { utype: 'cav', faction: 'atk', zone: 'city', pos: new THREE.Vector3() };
+  const infantry = { utype: 'def', faction: 'def', zone: 'city', alive: true, hp: 9, hpMax: 9, pos: new THREE.Vector3(3, 0, 0) };
+  const archer = { utype: 'archer', faction: 'def', zone: 'city', alive: true, hp: 3, hpMax: 3, pos: new THREE.Vector3(8, 0, 0) };
+  assert.ok(targetScore(attacker, archer, 8) > targetScore(attacker, infantry, 3));
+  assert.equal(chooseTacticalTarget(attacker, [infantry, archer], 30), archer);
+});
+
+test('first attackers descending into a closed city receive gate duty', () => {
+  const soldier = { faction: 'atk', alive: true, zone: 'wall', state: 'wall', pos: new THREE.Vector3() };
+  const battle = {
+    gate: { open: false },
+    gateOpeners: new Set(),
+    wallFighters: [new Set([soldier]), new Set(), new Set(), new Set()],
+    cityAttackers: new Set(),
+  };
+  Battle.prototype.onStairBottomArrived.call(battle, 0, soldier);
+  assert.equal(soldier.gateDuty, true);
+  assert.equal(battle.gateOpeners.has(soldier), true);
+  assert.equal(battle.cityAttackers.has(soldier), true);
+});
+
+test('capture directive holds troops or releases them to descend', () => {
+  const held = { alive: true, stair: null, state: 'wall', intent: '', waypoints: null };
+  const events = [];
+  const battle = {
+    captured: [true, false, false, false],
+    captureDirective: ['pending', null, null, null],
+    wallFighters: [new Set([held]), new Set(), new Set(), new Set()],
+    onEvent: (type, data) => events.push([type, data]),
+    assignWallSupport() {},
+  };
+  assert.equal(Battle.prototype.chooseCaptureAction.call(battle, 0, 'hold'), true);
+  assert.equal(held.intent, 'hold-captured-wall');
+  assert.equal(held.wallSupport, true);
+  assert.equal(events.at(-1)[0], 'capture_action');
+});
+
+test('company corridor makes a trailing company yield without deadlocking the leader', () => {
+  const leader = { id: 1, state: 'march', anchor: new THREE.Vector3(0, 0, 0), waypoints: [new THREE.Vector3(0, 0, -30)] };
+  const trailing = { id: 2, state: 'march', anchor: new THREE.Vector3(0, 0, 8), waypoints: [new THREE.Vector3(0, 0, -30)] };
+  const battle = { companies: [leader, trailing] };
+  const direction = new THREE.Vector3(0, 0, -1);
+  assert.equal(Battle.prototype.canCompanyAdvance.call(battle, trailing, direction), false);
+  assert.equal(Battle.prototype.canCompanyAdvance.call(battle, leader, direction), true);
+});
+
+test('shield-front company formation places shield companies in the leading rank', () => {
+  const companies = [
+    ...Array.from({ length: 8 }, (_, i) => ({ ctype: 'spear', anchor: new THREE.Vector3(i, 0, 30) })),
+    { ctype: 'shield', anchor: new THREE.Vector3(9, 0, 30) },
+  ];
+  const target = new THREE.Vector3(0, 0, 0);
+  const points = formationDestinations(companies, target, 10, 'shield-front');
+  const forward = target.clone().sub(companies.reduce((v, c) => v.add(c.anchor), new THREE.Vector3()).multiplyScalar(1 / companies.length)).normalize();
+  assert.ok(points[8].clone().sub(target).dot(forward) > points[7].clone().sub(target).dot(forward));
 });

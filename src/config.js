@@ -11,15 +11,15 @@ export const CFG = {
 
   spawnDist: 90,           // จุดตั้งทัพเริ่มเกม
 
-  // ---------- กองทัพฝ่ายโจมตี: ราบปกติด้านละ 36 กอง + รถทุบเฉพาะด้านใต้ ----------
+  // ---------- กองทัพฝ่ายโจมตี: standard battle เน้นอ่านรูปขบวนออก ----------
   army: {
     composition: [
-      ...Array(20).fill('spear'), // พลหอก — แบกบันได ปีน ปะทะ
-      ...Array(8).fill('shield'), // พลโล่ — กำบังธนูให้ทัพ เดินช้า แกร่ง
-      ...Array(8).fill('archer'), // นักธนู — ยิงกดกำแพงจากระยะ
+      ...Array(12).fill('spear'), // พลหอก — แบกบันได ปีน ปะทะ
+      ...Array(6).fill('shield'), // พลโล่ — กำบังธนูให้ทัพ เดินช้า แกร่ง
+      ...Array(4).fill('archer'), // นักธนู — ยิงกดกำแพงจากระยะ
     ],
-    ramCompanies: 4,             // รถทุบทั้งหมดตั้งทัพเฉพาะด้านใต้หน้าประตู
-    cavalryCompanies: 16,
+    ramCompanies: 3,             // รถทุบทั้งหมดตั้งทัพเฉพาะด้านใต้หน้าประตู
+    cavalryCompanies: 8,
     cavalryPerCompany: 10,
   },
 
@@ -28,12 +28,12 @@ export const CFG = {
     shield: { hp: 7, dmg: 1, atkCd: 0.9, speed: 2.9, climb: 1.5, coverRadius: 4.2, coverChance: 0.65 },
     atkArch: { hp: 3, dmg: 1, atkCd: 5.0, range: 64, projSpeed: 30, gravity: 10, standDist: 88, speed: 3.4 },
     cav: { hp: 7, dmg: 2, atkCd: 1.0, speed: 8.6 },
-    ram: { crew: 6, crewHp: 5, ramHp: 200, batterRate: 0.018, speed: 1.7, rockDmg: 20 },
+    ram: { crew: 6, crewHp: 5, ramHp: 240, batterRate: 0.02, speed: 1.7, rockDmg: 20 },
   },
 
   // ---------- ฝ่ายรับ ----------
-  wallMelee: 64,
-  wallArchers: 24,
+  wallMelee: 40,
+  wallArchers: 14,
   archerCd: 2.4,
   archerRange: 45,          // ไม่ถึงแนวตั้งทัพเริ่มต้น แต่ยิงโต้ธนูที่เข้าประจำตำแหน่งได้
   defender: { hp: 9, dmg: 1, atkCd: 1.3, speed: 2.4 },
@@ -43,8 +43,8 @@ export const CFG = {
   rockLogi: {
     pileStart: 30, pileMax: 45,
     reorderAt: 20,
-    stock: 800,
-    carriers: 16, carryAmount: 4,
+    stock: 500,
+    carriers: 10, carryAmount: 4,
     stairSpeed: 4.0, spacing: 1.1,
   },
   rock: {
@@ -58,20 +58,20 @@ export const CFG = {
   ai: {
     reinforceThreshold: 0.6,    // กำแพงเหลือ < 60% → ขอกำลังเสริม
     reinforceInterval: 3,
-    reinforceSquads: 10,        // จำนวนกองสูงสุดต่อรอบเสริม
+    reinforceSquads: 6,         // จำนวนกองสูงสุดต่อรอบเสริม
     minReinforceAlive: 0.22,
-    detachMax: 14,              // ยกพลข้ามด้านช่วยเพื่อนบ้าน (เมื่อด้านตัวเองสงบ)
+    detachMax: 8,               // ยกพลข้ามด้านช่วยเพื่อนบ้าน (เมื่อด้านตัวเองสงบ)
     detachCooldown: 20,
     detachThreat: 18,           // ผู้บุกบนกำแพง >= 18 นาย = ความคุกคามสูง
   },
 
   // กองสำรองในเมือง
-  reserveSquads: 200,
+  reserveSquads: 100,
   squadSize: 4,
 
   // ม้าซอง (sally) — เมืองเปิดประตูส่งม้าออกไปถล่มเครื่องโจมตีแล้วถอย
   sortie: {
-    cooldown: 60, duration: 16, horses: 24,
+    cooldown: 60, duration: 16, horses: 16,
     hp: 7, dmg: 2, atkCd: 1.0, speed: 8.6,
     triggerRange: 75, minReserves: 110, retreatBelow: 8,
   },
@@ -82,10 +82,11 @@ export const CFG = {
     insidePoint: 37,
     openRadius: 5.5,
     insideBase: 0.08, insidePer: 0.05,
+    openerLimit: 10,
   },
 
-  maxAssaultPerSide: 40,
-  descendAtOnce: 24,   // จำนวนลงบันไดในพร้อมกันต่อด้าน
+  maxAssaultPerSide: 24,
+  descendAtOnce: 16,   // จำนวนลงบันไดในพร้อมกันต่อด้าน
 
   movement: {
     spatialCell: 4,

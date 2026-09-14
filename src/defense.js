@@ -82,21 +82,26 @@ export class DefenseSide {
 
   // ---------- พลขนหิน ----------
   spawnCarrier(initial = false) {
+    const slot = this.carriers.length;
     const s = new Soldier({
       type: 'carrier', faction: 'def', side: -1, utype: 'carrier',
       hp: CFG.defender.hp, speed: CFG.defender.speed * 1.05, atkCd: CFG.defender.atkCd, dmg: 1, rng: this.battle.rng,
     });
     s.zone = 'city';
     s.state = 'order';
-    s.pos.copy(this.stockPoint());
+    s.pos.copy(this.stockPoint(slot));
     this.battle.group.add(s.mesh);
     s.syncMesh(0);
-    const c = { s, state: initial ? 'waiting' : 'waiting', t: 0 };
+    const c = { s, slot, state: initial ? 'waiting' : 'waiting', t: 0 };
     this.carriers.push(c);
     return c;
   }
 
-  stockPoint() { return worldPoint(this.side, 0, 28, 0); }
+  stockPoint(slot = 0) {
+    const lateral = ((slot % 5) - 2) * 2.1;
+    const depth = 28 - Math.floor(slot / 5) * 2.1;
+    return worldPoint(this.side, lateral, depth, 0);
+  }
   pilePoint() { return worldPoint(this.side, 2.5, 44.5, CFG.walkY); }
 
   updateCarriers(dt) {
@@ -122,7 +127,7 @@ export class DefenseSide {
         case 'toStock': {
           if (this.rock.stock <= 0) { c.state = 'waiting'; s.state = 'idle'; break; }
           s.state = 'order';
-          if (s.stepToward(dt, this.stockPoint(), s.speed, 0.7)) {
+          if (s.stepToward(dt, this.stockPoint(c.slot), s.speed, 0.7)) {
             this.rock.stock = Math.max(0, this.rock.stock - L.carryAmount); c.state = 'toStair';
           }
           break;
@@ -149,7 +154,7 @@ export class DefenseSide {
         case 'descend': break;
         case 'return': {
           s.state = 'order';
-          if (s.stepToward(dt, this.stockPoint(), s.speed, 0.8)) { c.state = 'waiting'; s.intent = 'await-rock-request'; }
+          if (s.stepToward(dt, this.stockPoint(c.slot), s.speed, 0.8)) { c.state = 'waiting'; s.intent = 'await-rock-request'; }
           break;
         }
       }

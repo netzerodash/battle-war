@@ -10,10 +10,12 @@ import { createOrder, ORDER_KIND, ORDER_PHASE } from './orders.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3();
+let nextCompanyId = 1;
 
 // กองร้อยหนึ่งหน่วย — มี 4 ประเภท: spear(หอกปีน) / shield(โล่กำบัง) / archer(ธนูกดกำแพง) / ram(รถทุบประตู) + cav
 export class Company {
   constructor(idx, side, ctype, spawnAnchor, battle) {
+    this.id = nextCompanyId++;
     this.idx = idx;
     this.side = side;
     this.ctype = ctype;        // 'spear' | 'shield' | 'archer' | 'ram' | 'cav'
@@ -304,7 +306,15 @@ export class Company {
         _v.subVectors(marchTarget, this.anchor); _v.y = 0;
         const d = _v.length();
         const spd = this.ctype === 'ram' ? CFG.unit.ram.speed : 2.6;
-        if (d > 0.4) this.anchor.addScaledVector(_v.normalize(), Math.min(d, spd * dt));
+        if (d > 0.4) {
+          _v.normalize();
+          if (this.battle.canCompanyAdvance(this, _v)) {
+            this.anchor.addScaledVector(_v, Math.min(d, spd * dt));
+            if (this.order?.waitingReason === 'รอช่องทางเดิน') this.order.waitingReason = '';
+          } else if (this.order) {
+            this.order.waitingReason = 'รอช่องทางเดิน';
+          }
+        }
         this.followSlots(dt, alive, marchTarget);
 
         if (this.ladder && !this.ladder.planted && !this.ladder.broken && this.mode === 'assault') {
@@ -326,9 +336,19 @@ export class Company {
             if (this.waypoints.length > 0) break;
           }
           if (this.mode === 'assault') {
-            if (this.ctype === 'archer') { this.state = 'volley'; }
-            else if (this.ctype === 'ram') { this.state = 'battering'; this.stateT = 0; this.battle.onEvent('ram_ready', {}); }
-            else { this.state = 'planting'; this.stateT = 0; this.gatherTargets(); }
+            if (this.ctype === 'archer') {
+              this.state = 'volley';
+              if (this.order) this.order.phase = ORDER_PHASE.ENGAGE;
+            }
+            else if (this.ctype === 'ram') {
+              this.state = 'battering'; this.stateT = 0;
+              if (this.order) this.order.phase = ORDER_PHASE.ENGAGE;
+              this.battle.onEvent('ram_ready', {});
+            }
+            else {
+              this.state = 'planting'; this.stateT = 0; this.gatherTargets();
+              if (this.order) this.order.phase = ORDER_PHASE.DEPLOY;
+            }
           } else {
             this.state = 'hold';
             if (this.order) this.order.phase = ORDER_PHASE.COMPLETE;
@@ -362,7 +382,7 @@ export class Company {
       case 'planting': {
         for (const s of alive) {
           if (s.state === 'march' || s.state === 'idle') {
-            s.stepToward(dt, s.gatherPos, s.speed, 0.4);
+            this.stepUnit(s, dt, s.gatherPos, s.speed, 0.4);
             if (!s.moving) s.facePoint(this.ladder ? this.ladder.base : this.anchor, dt);
           }
         }
@@ -373,7 +393,7 @@ export class Company {
       case 'climbing': this.updateClimbing(dt); break;
 
       case 'replanting': {
-        for (const s of alive) if (s.gatherPos) s.stepToward(dt, s.gatherPos, s.speed, 0.5);
+        for (const s of alive) if (s.gatherPos) this.stepUnit(s, dt, s.gatherPos, s.speed, 0.5);
         if (this.stateT >= CFG.ladder.replantTime) {
           this.plantT += this.battle.rng() * 12 - 6;
           this.resetLadderTo(this.side, this.plantT);
@@ -388,7 +408,7 @@ export class Company {
       case 'hold': {
         for (const s of alive) {
           s.state = 'hold';
-          if (s.gatherPos) s.stepToward(dt, s.gatherPos, s.speed, 0.4);
+          if (s.gatherPos) this.stepUnit(s, dt, s.gatherPos, s.speed, 0.4);
           s.facePoint(sectionCenter(this.side), dt);
         }
         break;
@@ -472,9 +492,16 @@ export class Company {
     this.progressSampleT += dt;
     if (this.progressSampleT < CFG.movement.stuckSample) return;
     const moved = this.anchor.distanceTo(this.progressPos);
+    if (this.order.waitingReason === 'รอช่องทางเดิน') {
+      this.order.stuckFor = 0;
+      this.progressPos.copy(this.anchor);
+      this.progressSampleT = 0;
+      return;
+    }
     this.order.stuckFor = moved < CFG.movement.stuckMinProgress
       ? this.order.stuckFor + this.progressSampleT
       : Math.max(0, this.order.stuckFor - this.progressSampleT * 2);
+    if (moved >= CFG.movement.stuckMinProgress && this.order.waitingReason === 'กำลังหาเส้นทางใหม่') this.order.waitingReason = '';
     this.progressPos.copy(this.anchor);
     this.progressSampleT = 0;
     if (this.order.stuckFor < CFG.movement.stuckTimeout) return;
@@ -556,6 +583,7 @@ export class Company {
     l.mesh.quaternion.setFromUnitVectors(UP, l.dir);
     for (const s of this.aliveSoldiers) if (s.state !== 'wall') s.state = 'waitBase';
     this.state = 'climbing';
+    if (this.order) this.order.phase = ORDER_PHASE.ENGAGE;
   }
 
   updateClimbing(dt) {
@@ -588,7 +616,7 @@ export class Company {
     for (const s of this.soldiers) {
       if (!s.alive || s.state !== 'toLadder') continue;
       _v.copy(l.base).addScaledVector(v.n, 0.9);
-      if (s.stepToward(dt, _v, s.speed, 0.7)) {
+      if (this.stepUnit(s, dt, _v, s.speed, 0.7)) {
         if (l.climbers.size < CFG.ladder.maxClimbers && !l.broken) {
           s.state = 'climb';
           s.climb = { ladder: l, s: 0.5 };

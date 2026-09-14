@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CFG, mulberry32 } from './config.js';
 import {
   SIDE_VECS, worldPoint, sectionOf, clampOnWall, sectionCenter, nearestSide,
-  stairPoints, gateInsidePoint, isInsideCity, clampFieldPoint, wallRoute,
+  stairPoints, gateInsidePoint, isInsideCity, clampFieldPoint, wallRoute, constrainFieldOutsideWall,
 } from './world.js';
 import { Company } from './company.js';
 import { DefenseSide, ReserveForce } from './defense.js';
@@ -14,8 +14,8 @@ import { formationDestinations } from './formation.js';
 import { battleOutcome } from './rules.js';
 import { SpatialHash } from './spatial-hash.js';
 import { EngagementRegistry } from './engagement.js';
-import { ORDER_LABELS, PHASE_LABELS } from './orders.js';
 import { assaultRoute, fieldRoute } from './navigation.js';
+import { chooseTacticalTarget } from './tactical-ai.js';
 
 const SPARK_MATS = {
   red: new THREE.MeshBasicMaterial({ color: 0xc03028 }),
@@ -25,6 +25,8 @@ const SPARK_MATS = {
   gold: new THREE.MeshBasicMaterial({ color: 0xf0b83e }),
   gray: new THREE.MeshBasicMaterial({ color: 0xcfcabc }),
 };
+const HP_BACK_MAT = new THREE.SpriteMaterial({ color: 0x24130f, opacity: 0.82, transparent: true, depthTest: false, depthWrite: false });
+const HP_FRONT_MAT = new THREE.SpriteMaterial({ color: 0x55c96b, depthTest: false, depthWrite: false });
 
 const _q = new THREE.Quaternion();
 const _t1 = new THREE.Vector3();
@@ -115,6 +117,7 @@ export class Battle {
     this.reserves = null;
     this.wallFighters = [[], [], [], []].map(() => new Set());
     this.cityAttackers = new Set();
+    this.gateOpeners = new Set();
     this.selection = new Set();
     this.hover = null;
     this.stairs = [0, 1, 2, 3].map((s) => new StairChannel(s));
@@ -138,7 +141,7 @@ export class Battle {
     this.movementGrid = new SpatialHash(CFG.movement.spatialCell);
     this._nearby = [];
     this.engagements = new EngagementRegistry();
-    this.metrics = { wallViolations: 0, overlapPairs: 0, stuckCompanies: 0, maxAttackersPerTarget: 0, sampleT: 0 };
+    this.metrics = { wallViolations: 0, overlapPairs: 0, chokeOverlapPairs: 0, stuckCompanies: 0, maxAttackersPerTarget: 0, sampleT: 0 };
     this.orderPreview = null;
     this.orderPreviewKey = '';
     this.lastCombatPos = null;
@@ -175,6 +178,13 @@ export class Battle {
       ring.visible = false;
       this.group.add(ring);
       c.selRing = ring;
+      const hpBack = new THREE.Sprite(HP_BACK_MAT);
+      const hpFront = new THREE.Sprite(HP_FRONT_MAT);
+      hpBack.scale.set(4.4, 0.42, 1);
+      hpFront.scale.set(4, 0.24, 1);
+      hpBack.visible = hpFront.visible = false;
+      this.group.add(hpBack, hpFront);
+      c.healthBar = { back: hpBack, front: hpFront };
     }
     this.hoverRing = new THREE.Mesh(ringGeo, ringMatHover);
     this.hoverRing.rotation.x = -Math.PI / 2;
@@ -371,7 +381,8 @@ export class Battle {
   }
 
   setOrderPreview(rawPoint, cls) {
-    const company = this.selection.values().next().value;
+    const selected = [...this.selection].filter((company) => company.state !== 'dead');
+    const company = selected[0];
     if (!company) { this.clearOrderPreview(); return; }
     const point = rawPoint.clone ? rawPoint.clone() : new THREE.Vector3(rawPoint.x, 0, rawPoint.z);
     if (cls.type === 'city' && !this.gate.open) cls = { type: 'assault', side: nearestSide(point) };
@@ -379,32 +390,41 @@ export class Battle {
     if (key === this.orderPreviewKey) return;
     this.clearOrderPreview();
     this.orderPreviewKey = key;
-    let route;
     let target = point;
     if (cls.type === 'assault') {
       const dist = company.ctype === 'archer' ? CFG.unit.atkArch.standDist : CFG.wallHalf + CFG.wallThick + 5;
       target = worldPoint(cls.side, SIDE_VECS[cls.side].t.dot(point), dist, 0);
-      route = assaultRoute(company.anchor, cls.side, target, this.wallThreats());
-    } else {
-      route = fieldRoute(company.anchor, point, this.wallThreats(), this.gate.open);
     }
-    const points = [company.anchor, ...route].map((p) => p.clone().setY(0.24));
+    const destinations = formationDestinations(selected, target, 14, this.commandFormation);
     const color = cls.type === 'assault' ? 0xe8c14a : cls.type === 'city' ? 0x65a8ff : 0x8fd18f;
     const lineMaterial = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.78 });
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), lineMaterial);
     const ghostMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.38, side: THREE.DoubleSide });
-    const ghost = new THREE.Mesh(ringGeoBig, ghostMaterial);
-    ghost.rotation.x = -Math.PI / 2;
-    ghost.position.copy(target).setY(0.12);
-    this.group.add(line, ghost);
-    this.orderPreview = { line, ghost };
+    const lines = [], ghosts = [];
+    const threats = this.wallThreats();
+    for (let i = 0; i < Math.min(selected.length, 24); i++) {
+      const c = selected[i], destination = destinations[i];
+      const route = cls.type === 'assault'
+        ? assaultRoute(c.anchor, cls.side, destination, threats)
+        : fieldRoute(c.anchor, destination, threats, this.gate.open);
+      if (i < 12) {
+        const points = [c.anchor, ...route].map((p) => p.clone().setY(0.24));
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), lineMaterial);
+        lines.push(line); this.group.add(line);
+      }
+      const ghost = new THREE.Mesh(c.ctype === 'ram' || c.ctype === 'cav' ? ringGeoBig : ringGeo, ghostMaterial);
+      ghost.rotation.x = -Math.PI / 2;
+      ghost.position.copy(destination).setY(0.12);
+      ghosts.push(ghost); this.group.add(ghost);
+    }
+    this.orderPreview = { lines, ghosts, lineMaterial, ghostMaterial };
   }
 
   clearOrderPreview() {
     if (!this.orderPreview) { this.orderPreviewKey = ''; return; }
-    const { line, ghost } = this.orderPreview;
-    this.group.remove(line, ghost);
-    line.geometry.dispose(); line.material.dispose(); ghost.material.dispose();
+    const { lines, ghosts, lineMaterial, ghostMaterial } = this.orderPreview;
+    for (const line of lines) { this.group.remove(line); line.geometry.dispose(); }
+    for (const ghost of ghosts) this.group.remove(ghost);
+    lineMaterial.dispose(); ghostMaterial.dispose();
     this.orderPreview = null;
     this.orderPreviewKey = '';
   }
@@ -465,15 +485,42 @@ export class Battle {
   }
 
   rebuildMovementGrid() {
-    const units = [...this._ground];
-    for (const s of this.cityAttackers) if (s.alive) units.push(s);
-    for (const sq of this.reserves.squads) for (const s of sq.soldiers) if (s.alive && s.zone === 'city') units.push(s);
+    const units = [];
+    for (const c of this.companies) for (const s of c.soldiers) if (s.alive && !s.climb && !s.stair) units.push(s);
+    for (const d of this.defenses) {
+      for (const s of d.melee) if (s.alive && !s.stair) units.push(s);
+      for (const s of d.archers) if (s.alive && !s.stair) units.push(s);
+      for (const carrier of d.carriers) if (carrier.s.alive && !carrier.s.stair) units.push(carrier.s);
+    }
+    for (const sq of this.reserves.squads) for (const s of sq.soldiers) if (s.alive && !s.stair) units.push(s);
+    for (const s of this.sally.horses) if (s.alive) units.push(s);
+    this._spatialUnits = units;
     this.movementGrid.rebuild(units);
   }
 
   nearGateOrStair(s) {
     if (Math.abs(s.pos.x) < 7 && s.pos.z > CFG.wallHalf - 7 && s.pos.z < CFG.wallHalf + CFG.wallThick + 9) return true;
     return !!s.stair || s.state === 'toLadder' || s.state === 'waitBase';
+  }
+
+  canCompanyAdvance(company, direction) {
+    for (const other of this.companies) {
+      if (other === company || other.state === 'dead') continue;
+      if (!['march', 'ride', 'cityMarch'].includes(other.state)) continue;
+      _t1.subVectors(other.anchor, company.anchor).setY(0);
+      const distance = _t1.length();
+      if (distance < 0.01 || distance > 9) continue;
+      const ahead = _t1.dot(direction);
+      if (ahead <= 0 || Math.abs(_t1.x * direction.z - _t1.z * direction.x) > 6) continue;
+      const otherTarget = other.waypoints?.[0] || other.dest;
+      if (!otherTarget) continue;
+      _t2.subVectors(otherTarget, other.anchor).setY(0);
+      if (_t2.lengthSq() < 0.01) continue;
+      _t2.normalize();
+      const sameDirection = direction.dot(_t2) > 0.45;
+      if (sameDirection || company.id > other.id) return false;
+    }
+    return true;
   }
 
   stepGroundUnit(s, dt, target, speed = s.speed, arriveR = 0.35) {
@@ -515,20 +562,24 @@ export class Battle {
     this.metrics.sampleT += dt;
     if (this.metrics.sampleT < 1) return;
     this.metrics.sampleT = 0;
-    let wallViolations = 0, overlapPairs = 0;
+    let wallViolations = 0, overlapPairs = 0, chokeOverlapPairs = 0;
     const inner = CFG.wallHalf - 0.8, outer = CFG.wallHalf + CFG.wallThick + 0.8;
-    for (const s of this._ground) {
+    for (const s of this._spatialUnits || this._ground) {
       const edge = Math.max(Math.abs(s.pos.x), Math.abs(s.pos.z));
       const gatePass = this.gate.open && s.pos.z > 0 && Math.abs(s.pos.x) <= 4.8;
-      if (edge > inner && edge < outer && !gatePass) wallViolations++;
+      if (s.zone === 'field' && edge > inner && edge < outer && !gatePass) wallViolations++;
       const radius = s.kind === 'cav' ? CFG.movement.cavalryRadius : CFG.movement.infantryRadius;
       for (const other of this.movementGrid.query(s.pos, radius * 1.7, this._nearby)) {
         if (other.id <= s.id || other.faction !== s.faction || other.zone !== s.zone) continue;
-        if (s.pos.distanceToSquared(other.pos) < (radius * 1.15) ** 2) overlapPairs++;
+        if (s.pos.distanceToSquared(other.pos) < (radius * 1.15) ** 2) {
+          if (this.nearGateOrStair(s) || this.nearGateOrStair(other)) chokeOverlapPairs++;
+          else overlapPairs++;
+        }
       }
     }
     this.metrics.wallViolations = wallViolations;
     this.metrics.overlapPairs = overlapPairs;
+    this.metrics.chokeOverlapPairs = chokeOverlapPairs;
     this.metrics.stuckCompanies = this.companies.filter((c) => (c.order?.stuckFor || 0) >= CFG.movement.stuckTimeout).length;
     let max = 0;
     for (const attackers of this.engagements.byTarget.values()) max = Math.max(max, attackers.length);
@@ -712,7 +763,15 @@ export class Battle {
     }
     s.zone = 'city';
     s.state = 'order';
-    s.orderTarget = gateInsidePoint();
+    if (!this.gate.open && this.gateOpeners.size < CFG.gate.openerLimit) {
+      s.gateDuty = true;
+      s.orderTarget = gateInsidePoint();
+      s.intent = 'open-city-gate';
+      this.gateOpeners.add(s);
+    } else {
+      s.orderTarget = worldPoint(2, 0, 20, 0);
+      s.intent = 'clear-city';
+    }
     this.wallFighters[side].delete(s);
     this.cityAttackers.add(s);
   }
@@ -865,18 +924,23 @@ export class Battle {
         if (!target) {
           if (u.faction === 'atk' && u.zone === 'wall') target = sectionCenter(u.wallObjectiveSide ?? sectionOf(u.pos));
           else if (u.faction === 'atk' && u.zone === 'city') {
-            const hunted = this.nearestCityDefender(u.pos, 180);
-            if (hunted) {
-              if (this.engagements.hasSpace(hunted, capacity)) {
-                target = hunted.pos;
-                u.intent = `hunt-city-${hunted.utype}`;
-              } else {
-                _t1.copy(u.pos).sub(hunted.pos).setY(0);
-                if (_t1.lengthSq() < 0.001) _t1.set((u.id % 2) * 2 - 1, 0, (u.id % 3) - 1);
-                target = hunted.pos.clone().addScaledVector(_t1.normalize(), 4.2);
-                u.intent = 'waiting-combat-slot';
-              }
-            } else target = u.orderTarget || gateInsidePoint();
+            if (u.gateDuty && !this.gate.open) {
+              target = gateInsidePoint();
+              u.intent = u.pos.distanceTo(target) < CFG.gate.openRadius ? 'opening-city-gate' : 'move-to-city-gate';
+            } else {
+              const hunted = this.nearestCityDefender(u.pos, 180, u);
+              if (hunted) {
+                if (this.engagements.hasSpace(hunted, capacity)) {
+                  target = hunted.pos;
+                  u.intent = `hunt-city-${hunted.utype}`;
+                } else {
+                  _t1.copy(u.pos).sub(hunted.pos).setY(0);
+                  if (_t1.lengthSq() < 0.001) _t1.set((u.id % 2) * 2 - 1, 0, (u.id % 3) - 1);
+                  target = hunted.pos.clone().addScaledVector(_t1.normalize(), 4.2);
+                  u.intent = 'waiting-combat-slot';
+                }
+              } else target = u.orderTarget || gateInsidePoint();
+            }
           } else if (u.faction === 'def') {
             target = u.orderTarget || u.homePost;
           }
@@ -916,12 +980,14 @@ export class Battle {
     return enemy;
   }
 
-  nearestCityDefender(pos, radius) {
+  nearestCityDefender(pos, radius, hunter = null) {
     let best = null, bestD = radius;
+    const candidates = [];
     // กองสำรอง + ทหารเมืองที่สละกำแพงลงมา (evacuees) ล้วนเป็นเป้าในเมือง
     for (const sq of this.reserves.squads) {
       for (const s of sq.soldiers) {
         if (!s.alive || s.zone !== 'city') continue;
+        if (hunter) { candidates.push(s); continue; }
         const d = pos.distanceTo(s.pos);
         if (d < bestD) { bestD = d; best = s; }
       }
@@ -929,21 +995,25 @@ export class Battle {
     for (const d of this.defenses) {
       for (const s of d.melee) {
         if (!s.alive || s.zone !== 'city') continue;
+        if (hunter) { candidates.push(s); continue; }
         const dd = pos.distanceTo(s.pos);
         if (dd < bestD) { bestD = dd; best = s; }
       }
       for (const s of d.archers) {
         if (!s.alive || s.zone !== 'city') continue;
+        if (hunter) { candidates.push(s); continue; }
         const dd = pos.distanceTo(s.pos);
         if (dd < bestD) { bestD = dd; best = s; }
       }
       for (const c of d.carriers) {
         const s = c.s;
         if (!s.alive || s.zone !== 'city') continue;
+        if (hunter) { candidates.push(s); continue; }
         const dd = pos.distanceTo(s.pos);
         if (dd < bestD) { bestD = dd; best = s; }
       }
     }
+    if (hunter) return chooseTacticalTarget(hunter, candidates, radius, (target) => this.engagements.byTarget.get(target)?.length || 0);
     return best;
   }
 
@@ -997,8 +1067,7 @@ export class Battle {
       }
     } else {
       u.pos.y = 0;
-      const m = Math.max(Math.abs(u.pos.x), Math.abs(u.pos.z));
-      if (m < CFG.wallHalf + CFG.wallThick + 0.6) u.pos.multiplyScalar((CFG.wallHalf + CFG.wallThick + 0.6) / m);
+      constrainFieldOutsideWall(u.pos, this.gate.open);
     }
   }
 
@@ -1319,6 +1388,8 @@ export class Battle {
       this.gate.progress = Math.min(1, this.gate.progress + dt * (CFG.gate.insideBase + CFG.gate.insidePer * Math.min(10, n)));
       if (this.gate.progress >= 1) {
         this.gate.open = true;
+        for (const s of this.gateOpeners) { s.gateDuty = false; s.intent = 'hunt-city-defenders'; }
+        this.gateOpeners.clear();
         this.onEvent('gate_open', {});
         for (const c of this.companies) {
           if (c.kind === 'cav' && c.waitingGate && c.pendingCityTarget) {
@@ -1439,12 +1510,27 @@ export class Battle {
     const fieldStates = ['idle', 'hold', 'march', 'ride', 'holdAt', 'waitBase', 'toLadder', 'volley', 'battering', 'order'];
     for (const c of this.companies) {
       for (const s of c.soldiers) s.syncMesh(dt);
-      const dead = c.aliveSoldiers.length === 0;
+      const alive = c.aliveSoldiers;
+      const dead = alive.length === 0;
       if (dead && c.selected) { c.selected = false; this.selection.delete(c); }
       c.selRing.visible = c.selected && !dead && fieldStates.includes(c.state);
       if (c.selRing.visible) {
         const p = c.flagPos;
         c.selRing.position.set(p.x, 0.07, p.z);
+      }
+      let hp = 0, hpMax = 0, engaged = false;
+      for (const s of alive) { hp += Math.max(0, s.hp); hpMax += s.hpMax; engaged ||= !!s.inCombat || !!s.attackTarget; }
+      const showHealth = !dead && (c.selected || engaged);
+      c.healthBar.back.visible = c.healthBar.front.visible = showHealth;
+      if (showHealth) {
+        const p = c.flagPos;
+        const ratio = hp / Math.max(1, hpMax);
+        c.healthBar.back.position.set(p.x, p.y + (c.kind === 'cav' ? 4.5 : 3.6), p.z);
+        c.healthBar.front.position.set(p.x, p.y + (c.kind === 'cav' ? 4.5 : 3.6), p.z + 0.01);
+        c.healthBar.front.scale.set(Math.max(0.04, 4 * ratio), 0.24, 1);
+        c.healthBar.front.material = ratio > 0.55 ? HP_FRONT_MAT : ratio > 0.25
+          ? (c._hpWarnMat ||= new THREE.SpriteMaterial({ color: 0xe4a63b, depthTest: false, depthWrite: false }))
+          : (c._hpDangerMat ||= new THREE.SpriteMaterial({ color: 0xc23b32, depthTest: false, depthWrite: false }));
       }
     }
     for (const d of this.defenses) {
@@ -1481,6 +1567,7 @@ export class Battle {
       for (const s of [...set]) if (s.state === 'dead') set.delete(s);
     }
     for (const s of [...this.cityAttackers]) if (s.state === 'dead') this.cityAttackers.delete(s);
+    for (const s of [...this.gateOpeners]) if (!s.alive || this.gate.open) this.gateOpeners.delete(s);
     for (let i = this.markers.length - 1; i >= 0; i--) {
       const m = this.markers[i];
       m.t += dt;
