@@ -1,5 +1,23 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+export const BATTLEFIELD_CLEAR_RADIUS = 220;
+
+export function mountainSpec(i) {
+  const angle = (i / 10) * Math.PI * 2 + 0.35;
+  const height = 55 + ((i * 97) % 70);
+  // Tall background peaks used to have very wide cone bases. After the army
+  // doubled, those bases reached into the south deployment and hid units.
+  const baseRadius = height * (0.58 + (i % 3) * 0.1);
+  const naturalRadius = 260 + ((i * 53) % 90);
+  const centerRadius = Math.max(naturalRadius, BATTLEFIELD_CLEAR_RADIUS + baseRadius);
+  return {
+    angle, centerRadius, height, baseRadius,
+    x: Math.cos(angle) * centerRadius,
+    z: Math.sin(angle) * centerRadius,
+  };
+}
+
 export function initScene(container) {
   const coarse = window.matchMedia('(pointer: coarse)').matches;
   const renderer = new THREE.WebGLRenderer({ antialias: !coarse, powerPreference: 'high-performance' });
@@ -55,11 +73,9 @@ export function initScene(container) {
   const mtnMat = new THREE.MeshLambertMaterial({ color: 0x93a68b, flatShading: true });
   const mtnMat2 = new THREE.MeshLambertMaterial({ color: 0xa7b79b, flatShading: true });
   for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2 + 0.35;
-    const r = 260 + ((i * 53) % 90);
-    const h = 55 + ((i * 97) % 70);
-    const m = new THREE.Mesh(new THREE.ConeGeometry(h * (0.9 + (i % 3) * 0.25), h, 5), i % 2 ? mtnMat : mtnMat2);
-    m.position.set(Math.cos(a) * r, h / 2 - 4, Math.sin(a) * r);
+    const spec = mountainSpec(i);
+    const m = new THREE.Mesh(new THREE.ConeGeometry(spec.baseRadius, spec.height, 5), i % 2 ? mtnMat : mtnMat2);
+    m.position.set(spec.x, spec.height / 2 - 4, spec.z);
     m.rotation.y = i * 1.3;
     scene.add(m);
   }

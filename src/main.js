@@ -241,11 +241,14 @@ function onBattleEvent(type, data) {
       if (pendingCaptureSide === data.side) { pendingCaptureSide = null; captureChoice.classList.add('hidden'); }
       UI.toast({ hold: '🛡 สั่งรักษากำแพงที่ยึดได้', reinforce: '↔ สั่งเคลื่อนไปช่วยกำแพงด้านข้าง', descend: '⚔ สั่งลงเมืองกวาดล้าง' }[data.action], 'blue');
       break;
+    case 'wall_descent_order': UI.toast(`⚔ ${data.n} กอง (${data.men} นาย) ถอนจากแนวกำแพง ลงเมืองไล่ล่าศัตรู!`, 'blue'); break;
     case 'ladder_broken': UI.toast(`🪜 บันไดด้าน${SIDE_NAMES[data.side]}ถูกหินกลิ้งใส่จนหัก!`, 'bad'); break;
     case 'support_march': UI.toast(`🧠 ผู้บัญชาการเมืองส่งพล ${data.n} นายจากด้าน${SIDE_NAMES[data.from]}ไปช่วยด้าน${SIDE_NAMES[data.to]}`); break;
     case 'sortie': UI.toast(`🐎 เมืองเปิดประตูส่งม้าซอง ${data.n} ตัวออกมาฟันนักธนู/รถทุบ! — ส่งหอกไปตัดตอน!`, 'bad'); sfx.hornLow(); break;
     case 'sortie_return': UI.toast('🐎 ม้าซองถอยกลับเข้าเมืองแล้ว'); break;
     case 'ram_ready': UI.toast('⚫ รถทุบเข้าประจำตำแหน่ง — เริ่มกระแทกประตู!'); break;
+    case 'archer_ram_takeover': UI.toast(`🏹 นักธนู ${data.n} นายรับช่วงรถทุบที่ถูกทิ้ง — ประตูยังพังต่อได้!`, 'blue'); break;
+    case 'archer_rearmed': UI.toast(`⚔ นักธนู ${data.n} นายวางธนู หยิบหอก แล้วเข้ายึดเมืองด้าน${SIDE_NAMES[data.side]}!`, 'big blue'); break;
     case 'ram_lost': UI.toast('⚫ รถทุบถูกหินจากหอประตูทำลาย!', 'bad'); sfx.thud(); break;
     case 'gate_breached': UI.toast('💥 รถทุบกระหน่ำประตูจนแตกกระจาย! กองม้าเข้าได้!', 'big blue'); sfx.cheer(); break;
     case 'gate_opening': UI.toast('🔧 ทหารเรากำลังแงะประตูเมือง...'); break;

@@ -28,6 +28,71 @@ const SPARK_MATS = {
 const HP_BACK_MAT = new THREE.SpriteMaterial({ color: 0x24130f, opacity: 0.82, transparent: true, depthTest: false, depthWrite: false });
 const HP_FRONT_MAT = new THREE.SpriteMaterial({ color: 0x55c96b, depthTest: false, depthWrite: false });
 
+const ORDER_VISUALS = Object.freeze({
+  attack: Object.freeze({ kind: 'attack', icon: '⚔', color: 0xe65a45, background: '#6f201c' }),
+  move: Object.freeze({ kind: 'move', icon: '👣', color: 0x63f2e5, background: '#06383a', iconColor: '#ffffff' }),
+});
+const ORDER_ICON_TEXTURES = new Map();
+
+export function orderVisual(type) {
+  return type === 'assault' ? ORDER_VISUALS.attack : ORDER_VISUALS.move;
+}
+
+function orderIconTexture(visual) {
+  if (ORDER_ICON_TEXTURES.has(visual.kind)) return ORDER_ICON_TEXTURES.get(visual.kind);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(64, 64, 55, 0, Math.PI * 2);
+  ctx.fillStyle = visual.background;
+  ctx.fill();
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = `#${visual.color.toString(16).padStart(6, '0')}`;
+  ctx.stroke();
+  if (visual.kind === 'move') {
+    // วาดรอยเท้าเองเพื่อไม่ให้ระบบปฏิบัติการเปลี่ยนเป็น emoji สีน้ำตาลที่กลืนกับพื้น
+    const drawFoot = (x, y, rotation) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+      ctx.beginPath();
+      ctx.ellipse(0, 7, 8, 16, 0, 0, Math.PI * 2);
+      ctx.ellipse(-5, -10, 3.8, 5, -0.25, 0, Math.PI * 2);
+      ctx.ellipse(0, -13, 3.5, 4.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(5, -11, 3.2, 4, 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+    ctx.fillStyle = visual.iconColor;
+    ctx.shadowColor = '#63f2e5';
+    ctx.shadowBlur = 10;
+    drawFoot(45, 78, -0.35);
+    drawFoot(79, 49, -0.35);
+    ctx.shadowBlur = 0;
+  } else {
+    ctx.font = 'bold 62px "Apple Color Emoji", "Noto Sans Thai", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff4d6';
+    ctx.fillText(visual.icon, 64, 67);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  ORDER_ICON_TEXTURES.set(visual.kind, texture);
+  return texture;
+}
+
+function makeOrderIcon(visual, opacity = 1) {
+  const material = new THREE.SpriteMaterial({
+    map: orderIconTexture(visual), transparent: true, opacity, depthTest: false, depthWrite: false,
+  });
+  const icon = new THREE.Sprite(material);
+  icon.scale.set(7.5, 7.5, 1);
+  icon.renderOrder = 20;
+  return icon;
+}
+
 const _q = new THREE.Quaternion();
 const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
@@ -244,8 +309,74 @@ export class Battle {
     return out;
   }
 
+  attackerArcherTargets() {
+    const out = this.wallDefenders();
+    if (this.gate.open) {
+      for (const d of this.defenses) {
+        for (const s of d.melee) if (s.alive && s.zone === 'city') out.push(s);
+        for (const s of d.archers) if (s.alive && s.zone === 'city') out.push(s);
+        for (const carrier of d.carriers) if (carrier.s.alive && carrier.s.zone === 'city') out.push(carrier.s);
+      }
+      for (const sq of this.reserves.squads) {
+        for (const s of sq.soldiers) if (s.alive && s.zone === 'city') out.push(s);
+      }
+    }
+    for (const s of this.sally.horses) if (s.alive && s.zone === 'field') out.push(s);
+    return out;
+  }
+
   ramUnderGate() {
-    return this.companies.find((c) => c.ctype === 'ram' && c.state === 'battering' && c.aliveSoldiers.length > 0) || null;
+    return this.companies.find((c) => c.ramMesh && c.state === 'battering' && c.aliveSoldiers.length > 0) || null;
+  }
+
+  assignArcherRamFallback() {
+    if (this.gate.open) return false;
+    if (this.companies.some((c) => c.aliveSoldiers.length > 0
+      && ((c.ctype === 'ram' && c.ramMesh && c.ramHp > 0) || c.gateCrew))) return false;
+    const abandoned = this.companies.find((c) => {
+      if (!c.ramMesh || c.ramHp <= 0 || c.aliveSoldiers.length > 0) return false;
+      if (c.ramClaimedBy?.aliveSoldiers?.length > 0) return false;
+      c.ramClaimedBy = null;
+      return true;
+    });
+    if (!abandoned) return false;
+    const archer = this.companies
+      .filter((c) => c.ctype === 'archer' && !c.gateCrew && c.aliveSoldiers.length > 0)
+      .sort((a, b) => a.anchor.distanceToSquared(abandoned.anchor) - b.anchor.distanceToSquared(abandoned.anchor))[0];
+    return archer ? archer.takeOverRam(abandoned) : false;
+  }
+
+  rearmArchersAfterCapture(side) {
+    let soldiers = 0;
+    for (const company of this.companies) {
+      if (company.ctype !== 'archer' || company.side !== side || company.aliveSoldiers.length === 0) continue;
+      const n = company.aliveSoldiers.length;
+      if (!company.rearmAsSpear()) continue;
+      soldiers += n;
+      if (!company.gateCrew) {
+        company.mode = 'hold';
+        company.state = 'hold';
+        company.orderAssault(side, { formation: 'column', stance: 'aggressive' });
+      }
+    }
+    if (soldiers > 0) this.onEvent('archer_rearmed', { side, n: soldiers });
+    return soldiers;
+  }
+
+  releaseGateAssaultCompanies(companies = null) {
+    const rally = worldPoint(2, 0, 20, 0);
+    const crews = companies || this.companies.filter((c) => c.gateCrew
+      || (c.ramMesh && c.state === 'battering' && c.aliveSoldiers.length > 0));
+    for (const company of crews) {
+      if (company.ctype === 'archer') company.rearmAsSpear(false);
+      company.gateCrew = false;
+      if (company.ramSource?.ramClaimedBy === company) company.ramSource.ramClaimedBy = null;
+      company.ramSource = null;
+      company.destroyRamMesh();
+      company.mode = 'hold';
+      company.state = 'hold';
+      company.orderCity(rally, { formation: 'column', stance: 'aggressive' });
+    }
   }
 
   // โล่ที่ยังมีชีวิต (ใช้ตรวจกำบังธนู)
@@ -312,6 +443,34 @@ export class Battle {
     return ordered;
   }
 
+  // กองที่ยืนรักษากำแพงที่ยึดแล้วรับคำสั่งใหม่รายกองได้ ไม่ต้องเปลี่ยนภารกิจทั้งด้าน
+  orderWallCompaniesToCity(companies, rallyPoint) {
+    const orderedCompanies = new Set();
+    let men = 0;
+    const sides = new Set();
+    for (const company of companies) {
+      for (const s of company.aliveSoldiers) {
+        if (s.zone !== 'wall' || s.stair) continue;
+        const side = this.wallFighters.findIndex((fighters) => fighters.has(s));
+        if (side < 0 || !this.captured[side]) continue;
+        s.wallSupport = false;
+        s.wallObjectiveSide = undefined;
+        s.waypoints = null;
+        s.state = 'wall';
+        s.forceCityDescent = true;
+        s.cityRallyTarget = rallyPoint.clone();
+        s.intent = 'descend-to-city';
+        orderedCompanies.add(company);
+        sides.add(side);
+        men++;
+      }
+    }
+    if (orderedCompanies.size) {
+      this.onEvent('wall_descent_order', { n: orderedCompanies.size, men, sides: [...sides] });
+    }
+    return orderedCompanies;
+  }
+
   orderSelected(rawPoint, cls) {
     const point = rawPoint.isVector3 ? rawPoint : new THREE.Vector3(rawPoint.x, rawPoint.y || 0, rawPoint.z);
     const sel = [...this.selection];
@@ -322,25 +481,34 @@ export class Battle {
     const tactics = { formation: this.commandFormation, stance: this.commandStance };
     let ordered = 0;
     this.clearOrderPreview();
-    this.spawnMarker(point, cls.type === 'assault' ? 0xe8c14a : 0x9adf9a);
+    const visual = orderVisual(cls.type);
+    this.spawnMarker(point, visual);
 
     if (cls.type === 'assault') {
       ordered = this.issueAssault(cls.side, ladder, archers, rams, cav);
       this.onEvent(ordered > 0 ? 'order_assault' : 'order_fail', { side: cls.side, n: ordered });
     } else if (cls.type === 'city') {
+      const descending = this.orderWallCompaniesToCity(sel, point);
+      ordered += descending.size;
+      const remaining = sel.filter((c) => !descending.has(c));
+      const remainingLadder = remaining.filter((c) => c.isLadderCarrier);
+      const remainingArchers = remaining.filter((c) => c.ctype === 'archer');
+      const remainingRams = remaining.filter((c) => c.ctype === 'ram');
+      const remainingCav = remaining.filter((c) => c.ctype === 'cav');
       if (this.gate.open) {
         // ประตูเปิด: ราบเดินเข้าเมืองผ่านประตูได้ / ม้าพุ่งเข้าไปเลย
-        const mobile = [...ladder, ...cav];
+        const mobile = [...remainingLadder, ...remainingCav];
         const destinations = formationDestinations(mobile, point, 12, this.commandFormation);
         for (let i = 0; i < mobile.length; i++) {
           const c = mobile[i];
           if (c.kind === 'cav' ? c.orderRide(destinations[i], tactics) : c.orderCity(destinations[i], tactics)) ordered++;
         }
-      } else {
+      } else if (remaining.length) {
         // ประตูยังปิด — ตีความเป็นการโจมตีด้านที่ใกล้จุดแตะที่สุด
         const side = nearestSide(point);
-        ordered = this.issueAssault(side, ladder, archers, rams, cav);
-        this.onEvent(ordered > 0 ? 'order_assault' : 'order_fail', { side, n: ordered });
+        const assaultOrdered = this.issueAssault(side, remainingLadder, remainingArchers, remainingRams, remainingCav);
+        ordered += assaultOrdered;
+        this.onEvent(assaultOrdered > 0 ? 'order_assault' : 'order_fail', { side, n: assaultOrdered });
       }
     } else {
       const destinations = formationDestinations(sel, clampFieldPoint(point), 14, this.commandFormation);
@@ -374,12 +542,14 @@ export class Battle {
     return next;
   }
 
-  spawnMarker(pos, color) {
-    const mesh = new THREE.Mesh(ringGeoBig, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+  spawnMarker(pos, visual) {
+    const mesh = new THREE.Mesh(ringGeoBig, new THREE.MeshBasicMaterial({ color: visual.color, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(pos.x, 0.1, pos.z);
-    this.group.add(mesh);
-    this.markers.push({ mesh, t: 0 });
+    const icon = makeOrderIcon(visual);
+    icon.position.set(pos.x, 4.5, pos.z);
+    this.group.add(mesh, icon);
+    this.markers.push({ mesh, icon, t: 0 });
   }
 
   setOrderPreview(rawPoint, cls) {
@@ -398,7 +568,8 @@ export class Battle {
       target = worldPoint(cls.side, SIDE_VECS[cls.side].t.dot(point), dist, 0);
     }
     const destinations = formationDestinations(selected, target, 14, this.commandFormation);
-    const color = cls.type === 'assault' ? 0xe8c14a : cls.type === 'city' ? 0x65a8ff : 0x8fd18f;
+    const visual = orderVisual(cls.type);
+    const color = visual.color;
     const lineMaterial = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.78 });
     const ghostMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.38, side: THREE.DoubleSide });
     const lines = [], ghosts = [];
@@ -418,14 +589,19 @@ export class Battle {
       ghost.position.copy(destination).setY(0.12);
       ghosts.push(ghost); this.group.add(ghost);
     }
-    this.orderPreview = { lines, ghosts, lineMaterial, ghostMaterial };
+    const icon = makeOrderIcon(visual, 0.76);
+    icon.position.copy(target).setY(4.5);
+    this.group.add(icon);
+    this.orderPreview = { lines, ghosts, icon, lineMaterial, ghostMaterial };
   }
 
   clearOrderPreview() {
     if (!this.orderPreview) { this.orderPreviewKey = ''; return; }
-    const { lines, ghosts, lineMaterial, ghostMaterial } = this.orderPreview;
+    const { lines, ghosts, icon, lineMaterial, ghostMaterial } = this.orderPreview;
     for (const line of lines) { this.group.remove(line); line.geometry.dispose(); }
     for (const ghost of ghosts) this.group.remove(ghost);
+    this.group.remove(icon);
+    icon.material.dispose();
     lineMaterial.dispose(); ghostMaterial.dispose();
     this.orderPreview = null;
     this.orderPreviewKey = '';
@@ -442,6 +618,7 @@ export class Battle {
     for (const d of this.defenses) d.update(dt);
     this.reserves.update(dt);
     this.computeFreeze();
+    this.assignArcherRamFallback();
     for (const c of this.companies) c.update(dt);
     this.updateWallSupport();
     this.updateCaptureDecisions();
@@ -615,7 +792,10 @@ export class Battle {
   updateDescent(dt) {
     for (let side = 0; side < 4; side++) {
       if (!this.captured[side]) continue;
-      if (this.captureDirective[side] === 'pending' || this.captureDirective[side] === 'hold') continue;
+      const directiveBlocksDescent = this.captureDirective[side] === 'pending' || this.captureDirective[side] === 'hold';
+      const hasForcedDescent = [...this.wallFighters[side]]
+        .some((s) => s.alive && (s.forceCityAfterCapture || s.forceCityDescent));
+      if (directiveBlocksDescent && !hasForcedDescent) continue;
       const st = this.stairs[side];
       const sp = stairPoints(side);
       let pending = 0;
@@ -623,7 +803,8 @@ export class Battle {
       let slots = CFG.descendAtOnce - st.down.length - pending;
       for (const s of this.wallFighters[side]) {
         if (!s.alive) continue;
-        if (s.wallSupport) continue;
+        const forcedDescent = s.forceCityAfterCapture || s.forceCityDescent;
+        if (!forcedDescent && (directiveBlocksDescent || s.wallSupport)) continue;
         if (slots > 0 && s.state === 'wall') {
           s.state = 'toStair';
           s.orderTarget = sp.top;
@@ -640,7 +821,9 @@ export class Battle {
     const targets = [(fromSide + 1) % 4, (fromSide + 3) % 4]
       .filter((side) => !this.captured[side] && this.defendersOn(side).length > 0);
     if (!targets.length) return;
-    const candidates = [...this.wallFighters[fromSide]].filter((s) => s.alive && !s.stair).slice(0, this.wallSupportLimit);
+    const candidates = [...this.wallFighters[fromSide]]
+      .filter((s) => s.alive && !s.stair && !s.forceCityAfterCapture && !s.forceCityDescent)
+      .slice(0, this.wallSupportLimit);
     candidates.forEach((s, i) => {
       const target = targets[i % targets.length];
       s.wallSupport = true;
@@ -656,6 +839,8 @@ export class Battle {
     this.captureDirective[side] = action;
     const fighters = [...this.wallFighters[side]].filter((s) => s.alive && !s.stair);
     for (const s of fighters) {
+      s.forceCityDescent = false;
+      s.cityRallyTarget = null;
       s.wallSupport = action === 'hold';
       s.wallObjectiveSide = action === 'hold' ? side : undefined;
       s.waypoints = null;
@@ -765,13 +950,17 @@ export class Battle {
     }
     s.zone = 'city';
     s.state = 'order';
+    s.forceCityAfterCapture = false;
+    s.forceCityDescent = false;
+    const cityRallyTarget = s.cityRallyTarget;
+    s.cityRallyTarget = null;
     if (!this.gate.open && this.gateOpeners.size < CFG.gate.openerLimit) {
       s.gateDuty = true;
       s.orderTarget = gateInsidePoint();
       s.intent = 'open-city-gate';
       this.gateOpeners.add(s);
     } else {
-      s.orderTarget = worldPoint(2, 0, 20, 0);
+      s.orderTarget = cityRallyTarget || worldPoint(2, 0, 20, 0);
       s.intent = 'clear-city';
     }
     this.wallFighters[side].delete(s);
@@ -780,6 +969,7 @@ export class Battle {
 
   // ทหารราบเดินเข้าเมืองผ่านประตู (จาก company.cityMarch)
   onInfEnteredCity(s) {
+    s.forceCityAfterCapture = false;
     this.cityAttackers.add(s);
   }
   onInfLeftCity(s) {
@@ -796,16 +986,7 @@ export class Battle {
 
   // ---------- นักธนูฝ่ายโจมตี: ยิงกดกำแพง ----------
   updateArcherVolley(dt) {
-    let wallUnits = this.wallDefenders();
-    // เมื่อประตูเปิด ทหารเมืองที่ลงมาในถนน (incl. last stand) ก็ยิงได้
-    if (this.gate.open) {
-      for (const d of this.defenses) {
-        for (const s of d.melee) if (s.alive && s.zone === 'city') wallUnits.push(s);
-      }
-      for (const sq of this.reserves.squads) {
-        for (const s of sq.soldiers) if (s.alive && s.zone === 'city') wallUnits.push(s);
-      }
-    }
+    const targets = this.attackerArcherTargets();
     for (const c of this.companies) {
       if (c.ctype !== 'archer' || c.state !== 'volley') continue;
       if (c.holdFire) continue;
@@ -813,9 +994,9 @@ export class Battle {
         if (!s.alive) continue;
         s.cd -= dt;
         if (s.cd > 0) continue;
-        // เลือกเป้าบนกำแพงที่ใกล้สุดในระยะ
+        // ยิงทหารจริงทุกโซนที่เปิดทางถึง: กำแพง, เมืองเมื่อประตูเปิด, และม้าซองในสนาม
         let best = null, bestD = CFG.unit.atkArch.range;
-        for (const w of wallUnits) {
+        for (const w of targets) {
           const d = s.pos.distanceTo(w.pos);
           if (d < bestD) { bestD = d; best = w; }
         }
@@ -1083,28 +1264,12 @@ export class Battle {
       if (!a) { a = []; this._gridG.set(k, a); }
       a.push(s);
     }
-    this._gridW = new Map(); // ฝ่ายบุกยิง → ทหารบนกำแพง + ในเมือง
-    for (const s of this.wallDefenders()) {
+    this._gridW = new Map(); // ฝ่ายบุกยิง → ทหารบนกำแพง + ในเมือง + ม้าซองในสนาม
+    for (const s of this.attackerArcherTargets()) {
       const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
       let a = this._gridW.get(k);
       if (!a) { a = []; this._gridW.set(k, a); }
       a.push(s);
-    }
-    if (this.gate.open) {
-      for (const d of this.defenses) for (const s of d.melee) {
-        if (!s.alive || s.zone !== 'city') continue;
-        const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
-        let a = this._gridW.get(k);
-        if (!a) { a = []; this._gridW.set(k, a); }
-        a.push(s);
-      }
-      for (const sq of this.reserves.squads) for (const s of sq.soldiers) {
-        if (!s.alive || s.zone !== 'city') continue;
-        const k = (Math.floor(s.pos.x / 8) + 300) + '|' + (Math.floor(s.pos.z / 8) + 300);
-        let a = this._gridW.get(k);
-        if (!a) { a = []; this._gridW.set(k, a); }
-        a.push(s);
-      }
     }
   }
 
@@ -1354,7 +1519,7 @@ export class Battle {
   updateRam(dt) {
     if (this.gate.open) return;
     // ประตูเป็นจุดเดียว — ความเร็วทุบไม่ซ้อนกัน (ใช้คันที่พร้อมที่สุด)
-    const rams = this.companies.filter((c) => c.ctype === 'ram' && c.state === 'battering' && c.aliveSoldiers.length > 0);
+    const rams = this.companies.filter((c) => c.ramMesh && c.state === 'battering' && c.aliveSoldiers.length > 0);
     if (rams.length > 0) {
       rams.forEach((company, index) => {
         if (company.order) company.order.waitingReason = index === 0 ? '' : 'รอช่องรถทุบประตู';
@@ -1365,8 +1530,7 @@ export class Battle {
         this.gate.open = true;
         this.shake = Math.max(this.shake, 1.6);
         this.onEvent('gate_breached', {});
-        const rally = worldPoint(2, 0, 20, 0);
-        for (const c of rams) c.orderCity(rally);
+        this.releaseGateAssaultCompanies(rams);
       }
     }
   }
@@ -1392,6 +1556,7 @@ export class Battle {
         this.gate.open = true;
         for (const s of this.gateOpeners) { s.gateDuty = false; s.intent = 'hunt-city-defenders'; }
         this.gateOpeners.clear();
+        this.releaseGateAssaultCompanies();
         this.onEvent('gate_open', {});
         for (const c of this.companies) {
           if (c.kind === 'cav' && c.waitingGate && c.pendingCityTarget) {
@@ -1431,7 +1596,7 @@ export class Battle {
     // มีเครื่องโจมตีตั้งหลักแหล่งใกล้ประตูหรือไม่ (นักธนู / รถทุบ)
     let prey = null, preyD = CFG.sortie.triggerRange;
     for (const c of this.companies) {
-      if ((c.ctype === 'archer' && c.state === 'volley') || (c.ctype === 'ram' && c.state === 'battering')) {
+      if ((c.ctype === 'archer' && c.state === 'volley') || (c.ramMesh && c.state === 'battering')) {
         const d = c.flagPos.distanceTo(gateInsidePoint());
         if (d < preyD) { preyD = d; prey = c; }
       }
@@ -1480,6 +1645,7 @@ export class Battle {
           this.spawnSpark(sectionCenter(s), 'blue', 10, 4);
           this.shake = Math.max(this.shake, 0.7);
           this.onEvent('captured', { side: s });
+          this.rearmArchersAfterCapture(s);
           this.captureDirective[s] = 'pending';
           this.captureDecisionAt[s] = this.time;
         }
@@ -1573,9 +1739,16 @@ export class Battle {
     for (let i = this.markers.length - 1; i >= 0; i--) {
       const m = this.markers[i];
       m.t += dt;
-      m.mesh.scale.setScalar(1 + m.t * 2.5);
-      m.mesh.material.opacity = Math.max(0, 0.9 - m.t * 1.6);
-      if (m.t > 0.6) { this.group.remove(m.mesh); m.mesh.material.dispose(); this.markers.splice(i, 1); }
+      m.mesh.scale.setScalar(1 + m.t * 1.5);
+      m.mesh.material.opacity = Math.max(0, 0.9 - m.t * 0.72);
+      m.icon.position.y = 4.5 + m.t * 2;
+      m.icon.material.opacity = Math.max(0, 1 - m.t * 0.78);
+      if (m.t > 1.25) {
+        this.group.remove(m.mesh, m.icon);
+        m.mesh.material.dispose();
+        m.icon.material.dispose();
+        this.markers.splice(i, 1);
+      }
     }
   }
 

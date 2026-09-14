@@ -5,7 +5,7 @@ import { battleOutcome, canUnitClimb } from '../src/rules.js';
 import { formationDestinations, unitSlot } from '../src/formation.js';
 import { gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS } from '../src/world.js';
 import { CFG, mulberry32 } from '../src/config.js';
-import { Battle } from '../src/battle.js';
+import { Battle, orderVisual } from '../src/battle.js';
 import { gateDoorAngle } from '../src/city.js';
 import { assaultRoute } from '../src/navigation.js';
 import { fieldRoute, routeLength } from '../src/navigation.js';
@@ -14,6 +14,8 @@ import { SpatialHash } from '../src/spatial-hash.js';
 import { EngagementRegistry } from '../src/engagement.js';
 import { DefenseSide, ReserveForce } from '../src/defense.js';
 import { chooseTacticalTarget, targetScore } from '../src/tactical-ai.js';
+import { BATTLEFIELD_CLEAR_RADIUS, mountainSpec } from '../src/scene.js';
+import { Company } from '../src/company.js';
 
 test('victory requires both no defenders and an open gate', () => {
   const base = { defendersAlive: 0, attackersAlive: 1, time: 10, timeLimit: 20 };
@@ -34,6 +36,23 @@ test('large battle doubles both starting armies', () => {
     + CFG.reserveSquads * CFG.squadSize;
   assert.equal(attackerInfantry + attackerRams + attackerCavalry, 1956);
   assert.equal(defenders, 1312);
+});
+
+test('move and attack orders use unmistakably different map symbols', () => {
+  const move = orderVisual('field');
+  const attack = orderVisual('assault');
+  assert.equal(move.icon, '👣');
+  assert.equal(move.iconColor, '#ffffff');
+  assert.equal(attack.icon, '⚔');
+  assert.notEqual(move.color, attack.color);
+});
+
+test('background mountains stay outside the full deployment area', () => {
+  for (let i = 0; i < 10; i++) {
+    const mountain = mountainSpec(i);
+    assert.ok(mountain.centerRadius - mountain.baseRadius >= BATTLEFIELD_CLEAR_RADIUS,
+      `mountain ${i} enters the battlefield`);
+  }
 });
 
 test('a multi-company order gives every company a distinct destination', () => {
@@ -281,6 +300,41 @@ test('capture directive holds troops or releases them to descend', () => {
   assert.equal(events.at(-1)[0], 'capture_action');
 });
 
+test('a held captured-wall company accepts a later city descent order', () => {
+  const soldier = {
+    alive: true, stair: null, zone: 'wall', state: 'wall', side: 0,
+    wallSupport: true, wallObjectiveSide: 0, intent: 'hold-captured-wall',
+  };
+  const company = {
+    ctype: 'spear', kind: 'inf', isLadderCarrier: true,
+    aliveSoldiers: [soldier],
+  };
+  soldier.company = company;
+  const events = [];
+  const battle = {
+    selection: new Set([company]),
+    captured: [true, false, false, false],
+    captureDirective: ['hold', null, null, null],
+    wallFighters: [new Set([soldier]), new Set(), new Set(), new Set()],
+    gate: { open: false },
+    commandFormation: 'column', commandStance: 'aggressive',
+    clearOrderPreview() {}, spawnMarker() {},
+    issueAssault() { return 0; },
+    orderWallCompaniesToCity(...args) {
+      return Battle.prototype.orderWallCompaniesToCity.call(this, ...args);
+    },
+    onEvent: (type, data) => events.push([type, data]),
+  };
+
+  Battle.prototype.orderSelected.call(battle, new THREE.Vector3(0, 0, 0), { type: 'city' });
+
+  assert.equal(soldier.wallSupport, false);
+  assert.equal(soldier.forceCityDescent, true);
+  assert.equal(soldier.intent, 'descend-to-city');
+  assert.equal(events.at(-1)[0], 'order_result');
+  assert.equal(events.at(-1)[1].n, 1);
+});
+
 test('company corridor makes a trailing company yield without deadlocking the leader', () => {
   const leader = { id: 1, state: 'march', anchor: new THREE.Vector3(0, 0, 0), waypoints: [new THREE.Vector3(0, 0, -30)] };
   const trailing = { id: 2, state: 'march', anchor: new THREE.Vector3(0, 0, 8), waypoints: [new THREE.Vector3(0, 0, -30)] };
@@ -299,4 +353,91 @@ test('shield-front company formation places shield companies in the leading rank
   const points = formationDestinations(companies, target, 10, 'shield-front');
   const forward = target.clone().sub(companies.reduce((v, c) => v.add(c.anchor), new THREE.Vector3()).multiplyScalar(1 / companies.length)).normalize();
   assert.ok(points[8].clone().sub(target).dot(forward) > points[7].clone().sub(target).dot(forward));
+});
+
+test('archers automatically claim an abandoned intact ram when every ram crew is dead', () => {
+  const abandonedRam = {
+    ctype: 'ram', aliveSoldiers: [], ramMesh: {}, ramHp: 120,
+    ramClaimedBy: null, anchor: new THREE.Vector3(0, 0, 55),
+  };
+  let claimed = null;
+  const archer = {
+    ctype: 'archer', aliveSoldiers: [{}], gateCrew: false,
+    anchor: new THREE.Vector3(0, 0, 80),
+    takeOverRam(ram) { claimed = ram; ram.ramClaimedBy = this; return true; },
+  };
+  const battle = { gate: { open: false }, companies: [abandonedRam, archer] };
+  assert.equal(Battle.prototype.assignArcherRamFallback.call(battle), true);
+  assert.equal(claimed, abandonedRam);
+});
+
+test('an archer company can rearm as spear infantry after a wall is captured', () => {
+  const battle = { rng: () => 0.5, group: new THREE.Group() };
+  const company = new Company(0, 2, 'archer', new THREE.Vector3(0, 0, 90), battle);
+  assert.equal(company.rearmAsSpear(), true);
+  assert.equal(company.ctype, 'spear');
+  assert.equal(company.isLadderCarrier, true);
+  assert.ok(company.soldiers.every((s) => s.utype === 'spear'
+    && s.hpMax === CFG.unit.spear.hp && s.forceCityAfterCapture));
+});
+
+test('capturing a wall rearms its supporting archers and sends them to the city route', () => {
+  const events = [];
+  const battle = {
+    rng: () => 0.5,
+    group: new THREE.Group(),
+    gate: { open: false },
+    time: 30,
+    assignPlantSlot: () => 0,
+    wallThreats: () => [0, 0, 0, 0],
+    onEvent: (type, data) => events.push([type, data]),
+  };
+  const company = new Company(0, 1, 'archer', new THREE.Vector3(90, 0, 0), battle);
+  battle.companies = [company];
+  assert.equal(Battle.prototype.rearmArchersAfterCapture.call(battle, 1), 10);
+  assert.equal(company.ctype, 'spear');
+  assert.equal(company.state, 'march');
+  assert.ok(company.ladder);
+  assert.equal(events.at(-1)[0], 'archer_rearmed');
+});
+
+test('attacker archers can target enemy soldiers on walls, in the city, and in the field', () => {
+  const make = (utype, zone) => ({ utype, zone, alive: true, faction: 'def' });
+  const wall = make('def', 'wall');
+  const cityMelee = make('def', 'city');
+  const cityArcher = make('archer', 'city');
+  const carrier = make('carrier', 'city');
+  const reserve = make('def', 'city');
+  const sally = make('sally', 'field');
+  const battle = {
+    gate: { open: true },
+    wallDefenders: () => [wall],
+    defenses: [{ melee: [cityMelee], archers: [cityArcher], carriers: [{ s: carrier }] }],
+    reserves: { squads: [{ soldiers: [reserve] }] },
+    sally: { horses: [sally] },
+  };
+  assert.deepEqual(Battle.prototype.attackerArcherTargets.call(battle),
+    [wall, cityMelee, cityArcher, carrier, reserve, sally]);
+});
+
+test('a replacement archer crew rearms and enters the city when the gate opens', () => {
+  let entered = false, ramRemoved = false;
+  let forceCityAfterCapture;
+  const company = {
+    ctype: 'archer', gateCrew: true, ramSource: null, ramMesh: {}, state: 'battering',
+    aliveSoldiers: [{}],
+    rearmAsSpear(forceCity) {
+      forceCityAfterCapture = forceCity;
+      this.ctype = 'spear';
+      return true;
+    },
+    destroyRamMesh() { this.ramMesh = null; ramRemoved = true; },
+    orderCity() { entered = true; return true; },
+  };
+  Battle.prototype.releaseGateAssaultCompanies.call({ companies: [company] });
+  assert.equal(company.ctype, 'spear');
+  assert.equal(forceCityAfterCapture, false);
+  assert.equal(company.gateCrew, false);
+  assert.equal(ramRemoved, true);
+  assert.equal(entered, true);
 });

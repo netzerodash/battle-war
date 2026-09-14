@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CFG } from './config.js';
 import { worldPoint, sectionCenter, gateFrontPoint, gateInsidePoint, gateRoute, isInsideCity, clampFieldPoint, constrainFieldOutsideWall, SIDE_VECS } from './world.js';
 import { Soldier } from './soldier.js';
-import { makeLadder, makeRamMesh } from './models.js';
+import { makeLadder, makeRamMesh, makeSoldierMesh } from './models.js';
 import { unitSlot } from './formation.js';
 import { canUnitClimb } from './rules.js';
 import { assaultRoute, fieldRoute } from './navigation.js';
@@ -38,6 +38,8 @@ export class Company {
     this.waitingGate = false;
     this.volleyPos = null;
     this.holdFire = false;
+    this.gateCrew = false;
+    this.ramSource = null;
     this.formation = 'line';
     this.stance = 'aggressive';
     this.order = null;
@@ -230,7 +232,7 @@ export class Company {
 
   // ทหารราบเดินเข้าเมืองผ่านประตู (ได้เมื่อประตูเปิดแล้วเท่านั้น)
   orderCity(point, tactics = {}) {
-    if (this.kind !== 'inf' || this.ctype === 'archer') return false;
+    if (this.kind !== 'inf' || (this.ctype === 'archer' && !this.gateCrew)) return false;
     if (!this.battle.gate.open || !this.orderable() || this.aliveSoldiers.length === 0) return false;
     this.mode = 'city';
     this.setTactics(tactics.formation || 'column', tactics.stance);
@@ -247,6 +249,78 @@ export class Company {
     this.stateT = 0;
     for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
     if (this.ladder && this.ladder.planted) { this.ladder.planted = false; this.ladder.mesh.visible = false; }
+    return true;
+  }
+
+  // เมื่อพลรถทุบตายหมด นักธนูที่ยังรบได้จะไปรับช่วงรถทุบที่ถูกทิ้งไว้
+  takeOverRam(ramCompany) {
+    if (this.ctype !== 'archer' || this.gateCrew || this.aliveSoldiers.length === 0) return false;
+    if (!ramCompany?.ramMesh || ramCompany.ramHp <= 0 || ramCompany.ramClaimedBy) return false;
+    ramCompany.ramClaimedBy = this;
+    this.gateCrew = true;
+    this.ramSource = ramCompany;
+    this.side = 2;
+    this.mode = 'ram-takeover';
+    this.state = 'march';
+    this.stateT = 0;
+    this.dest = ramCompany.anchor.clone();
+    const route = fieldRoute(this.anchor, this.dest, this.routeThreats(), this.battle.gate.open);
+    this.beginOrder(ORDER_KIND.ASSAULT_WALL, this.dest, route, 2);
+    this.order.waitingReason = 'กำลังไปรับช่วงรถทุบประตู';
+    for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; s.intent = 'take-over-abandoned-ram'; }
+    return true;
+  }
+
+  collectAbandonedRam() {
+    const source = this.ramSource;
+    if (!source?.ramMesh || source.ramHp <= 0) {
+      if (source?.ramClaimedBy === this) source.ramClaimedBy = null;
+      this.gateCrew = false;
+      this.ramSource = null;
+      this.state = 'volley';
+      return false;
+    }
+    this.ramMesh = source.ramMesh;
+    this.ramHp = source.ramHp;
+    source.ramMesh = null;
+    source.ramHp = 0;
+    source.ramClaimedBy = null;
+    this.ramSource = null;
+    this.mode = 'assault';
+    this.dest = gateFrontPoint().addScaledVector(SIDE_VECS[2].n, -1.5);
+    const route = assaultRoute(this.anchor, 2, this.dest, this.routeThreats());
+    this.beginOrder(ORDER_KIND.ASSAULT_WALL, this.dest, route, 2);
+    this.order.waitingReason = '';
+    this.state = 'march';
+    for (const s of this.aliveSoldiers) { s.state = 'march'; s.intent = 'push-recovered-ram'; }
+    this.battle.onEvent('archer_ram_takeover', { n: this.aliveSoldiers.length });
+    return true;
+  }
+
+  // หลังยึดกำแพง นักธนูวางคันธนู หยิบหอก และใช้ state machine ของทหารราบเต็มรูปแบบ
+  rearmAsSpear(forceCityAfterCapture = true) {
+    if (this.ctype !== 'archer' || this.aliveSoldiers.length === 0) return false;
+    this.ctype = 'spear';
+    this.kind = 'inf';
+    this.holdFire = false;
+    this.soldiers.forEach((s, index) => {
+      if (!s.alive) return;
+      const healthRatio = s.hpMax > 0 ? Math.max(0, s.hp) / s.hpMax : 1;
+      const scale = s.mesh.scale.clone();
+      this.battle.group.remove(s.mesh);
+      s.mesh = makeSoldierMesh(index === 0 ? 'atkBanner' : 'atk');
+      s.mesh.userData.soldier = s;
+      s.mesh.scale.copy(scale);
+      s.utype = 'spear';
+      s.forceCityAfterCapture = forceCityAfterCapture;
+      s.hpMax = CFG.unit.spear.hp;
+      s.hp = Math.max(1, s.hpMax * healthRatio);
+      s.speed = CFG.unit.spear.speed;
+      s.atkCd = CFG.unit.spear.atkCd;
+      s.dmg = CFG.unit.spear.dmg;
+      this.battle.group.add(s.mesh);
+      s.syncMesh(0);
+    });
     return true;
   }
 
@@ -305,7 +379,7 @@ export class Company {
         const marchTarget = this.waypoints?.length ? this.waypoints[0] : this.dest;
         _v.subVectors(marchTarget, this.anchor); _v.y = 0;
         const d = _v.length();
-        const spd = this.ctype === 'ram' ? CFG.unit.ram.speed : 2.6;
+        const spd = this.ramMesh ? CFG.unit.ram.speed : 2.6;
         if (d > 0.4) {
           _v.normalize();
           if (this.battle.canCompanyAdvance(this, _v)) {
@@ -335,8 +409,16 @@ export class Company {
             }
             if (this.waypoints.length > 0) break;
           }
-          if (this.mode === 'assault') {
-            if (this.ctype === 'archer') {
+          if (this.mode === 'ram-takeover') {
+            this.collectAbandonedRam();
+          }
+          else if (this.mode === 'assault') {
+            if (this.gateCrew && this.ramMesh) {
+              this.state = 'battering'; this.stateT = 0;
+              if (this.order) this.order.phase = ORDER_PHASE.ENGAGE;
+              this.battle.onEvent('ram_ready', {});
+            }
+            else if (this.ctype === 'archer') {
               this.state = 'volley';
               if (this.order) this.order.phase = ORDER_PHASE.ENGAGE;
             }
@@ -551,7 +633,7 @@ export class Company {
     if (forward.lengthSq() < 0.001) forward.copy(SIDE_VECS[this.side].n).multiplyScalar(-1);
     forward.normalize();
     const right = new THREE.Vector3(forward.z, 0, -forward.x);
-    const sp = this.kind === 'cav' ? 2.6 : this.ctype === 'ram' ? 2.2 : 1.5;
+    const sp = this.kind === 'cav' ? 2.6 : this.ramMesh ? 2.2 : 1.5;
     for (let i = 0; i < alive.length; i++) {
       const s = alive[i];
       const slot = unitSlot(i, alive.length, sp, this.formation);
@@ -645,6 +727,8 @@ export class Company {
   onRamDestroyed() {
     this.ramHp = 0;
     if (this.ramMesh) { this.battle.group.remove(this.ramMesh); this.ramMesh = null; }
+    this.gateCrew = false;
+    this.ramSource = null;
     this.mode = 'hold';
     this.state = 'hold';
     this.dest = this.spawnBase.clone();
