@@ -61,9 +61,9 @@ export const sectionCenter = (side) => worldPoint(side, 0, CFG.wallHalf + CFG.wa
 // จุดบันไดภายในประจำด้าน (ไว้ลงจากกำแพง / กองสำรองขึ้นเสริม)
 export function stairPoints(side) {
   return {
-    // ทอดเลียบด้านในกำแพง: วิ่งตามแนว tangent เป็นหลัก ไม่กินลานกลางเมือง
-    base: worldPoint(side, -12, CFG.wallHalf - 3.5, 0),
-    top: worldPoint(side, 10, CFG.wallHalf + 3.8, CFG.walkY),
+    // เกาะขอบในของกำแพงแล้วทอดยาวตามแนวกำแพง ไม่พุ่งกินลานกลางเมือง
+    base: worldPoint(side, -17, CFG.wallHalf - 4, 0),
+    top: worldPoint(side, 17, CFG.wallHalf + 1.2, CFG.walkY),
   };
 }
 
@@ -101,18 +101,33 @@ export function wallRoute(from, to) {
 export const gateFrontPoint = () => worldPoint(2, 0, CFG.gate.frontPoint, 0);
 export const gateInsidePoint = () => worldPoint(2, 0, CFG.gate.insidePoint, 0);
 
-// เส้นทางเดิน/ขี่อ้อมกำแพงไปหน้าประตู (จากด้านไหนก็ได้)
+// เส้นทางสั้นที่สุดอ้อมวงกำแพงไปหน้าประตูใต้
+// side เป็นเพียงข้อมูลย้อนหลังของคำสั่งเดิม; ต้องดูตำแหน่งจริงเสมอ เพราะกองทัพอาจย้ายข้ามด้านแล้ว
 export function gateRoute(side, pos) {
-  if (side === 2) return [];
-  let corners;
-  if (side === 0) {
-    corners = (pos && pos.x >= 0) ? [[52, -52], [52, 52]] : [[-52, -52], [-52, 52]];
-  } else if (side === 1) {
-    corners = [[52, 52]];
-  } else {
-    corners = [[-52, 52]];
-  }
-  return corners.map(([x, z]) => new THREE.Vector3(x, 0, z));
+  const start = pos || worldPoint(side, 0, CFG.wallHalf + CFG.wallThick + 4, 0);
+  const currentSide = sectionOf(start);
+  if (currentSide === 2) return [];
+
+  const c = CFG.wallHalf + CFG.wallThick + 4;
+  const routes = currentSide === 0
+    ? [
+      [new THREE.Vector3(-c, 0, -c), new THREE.Vector3(-c, 0, c)],
+      [new THREE.Vector3(c, 0, -c), new THREE.Vector3(c, 0, c)],
+    ]
+    : currentSide === 1
+      ? [[new THREE.Vector3(c, 0, c)]]
+      : [[new THREE.Vector3(-c, 0, c)]];
+  const gate = gateFrontPoint();
+  const length = (route) => {
+    let total = 0;
+    let previous = start;
+    for (const point of [...route, gate]) {
+      total += previous.distanceTo(point);
+      previous = point;
+    }
+    return total;
+  };
+  return routes.reduce((best, route) => length(route) < length(best) ? route : best);
 }
 
 // ด้านที่ใกล้จุด p ที่สุด (ใช้ตีความคำสั่งที่อยู่ในเมืองตอนประตูยังปิด)

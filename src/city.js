@@ -48,15 +48,27 @@ export function buildCity(scene) {
   };
   for (let s = 0; s < 4; s++) {
     const { n, t } = SIDE_VECS[s];
-    wpush(C.stone, 88, H, T, t, n.x * mid, H / 2, n.z * mid);
-    // ฐานรากยื่นออกสองข้าง
-    wpush(C.stoneDark, 90, 2.2, T + 1.6, t, n.x * mid, 1.1, n.z * mid);
+    if (s === 2) {
+      // เว้นช่องประตูจริงในเนื้อกำแพงใต้ มิฉะนั้นบานประตูหมุนแต่ยังมีกำแพงทึบซ้อนอยู่
+      const opening = 11;
+      const segmentLen = (88 - opening) / 2;
+      for (const sign of [-1, 1]) {
+        const off = sign * (opening / 2 + segmentLen / 2);
+        wpush(C.stone, segmentLen, H, T, t, t.x * off + n.x * mid, H / 2, t.z * off + n.z * mid);
+        wpush(C.stoneDark, segmentLen + 1, 2.2, T + 1.6, t, t.x * off + n.x * mid, 1.1, t.z * off + n.z * mid);
+      }
+    } else {
+      wpush(C.stone, 88, H, T, t, n.x * mid, H / 2, n.z * mid);
+      // ฐานรากยื่นออกสองข้าง
+      wpush(C.stoneDark, 90, 2.2, T + 1.6, t, n.x * mid, 1.1, n.z * mid);
+    }
     // แถบคาดแดงกลางกำแพง
     wpush(C.redDark, 88.4, 0.8, T + 0.3, t, n.x * mid, H * 0.62, n.z * mid);
     // พื้นยอดกำแพง
     wpush(C.walk, 88, 0.3, T - 0.5, t, n.x * mid, H + 0.15, n.z * mid);
     // เสาสันนอก (buttress) ทุก ๆ 8 เมตร
     for (let k = -5; k <= 5; k++) {
+      if (s === 2 && k === 0) continue;
       const off = k * 8;
       wpush(C.stoneDark, 1.6, H * 0.72, 1.2, t, t.x * off + n.x * (outer + 0.5), H * 0.36, t.z * off + n.z * (outer + 0.5));
     }
@@ -111,9 +123,10 @@ export function buildCity(scene) {
   cy(C.red, 1.3, 1.4, 11, 8, -6.2, 5.2, outer + 0.6);
   cy(C.red, 1.3, 1.4, 11, 8, 6.2, 5.2, outer + 0.6);
   bx(C.woodDark, 15.4, 2.4, 2.6, 0, 11.8, outer + 0.6);
-  push(C.redDark, new THREE.BoxGeometry(11, 9.6, 1.2).translate(0, 4.8, outer + 0.8));
-  bx(C.gold, 11, 0.6, 1.25, 0, 9.2, outer + 0.85);
-  for (let k = -4; k <= 4; k++) push(C.gold, new THREE.BoxGeometry(0.2, 9, 1.28).translate(k * 1.25, 4.8, outer + 0.85));
+  // ขอบช่องประตูแยกจากตัวบาน เพื่อให้เมื่อเปิดแล้วมองและเดินทะลุช่องได้จริง
+  bx(C.redDark, 1.0, 10.0, 1.4, -5.55, 5.0, outer + 0.65);
+  bx(C.redDark, 1.0, 10.0, 1.4, 5.55, 5.0, outer + 0.65);
+  bx(C.gold, 12.1, 0.55, 1.45, 0, 9.65, outer + 0.68);
   // หอคอยเหนือประตู 3 ชั้น
   push(C.red, new THREE.BoxGeometry(15, 4.2, 6.4).translate(0, 14.4, mid + 0.6));
   push(C.stone, new THREE.BoxGeometry(15.6, 0.5, 7).translate(0, 16.7, mid + 0.6));
@@ -126,26 +139,32 @@ export function buildCity(scene) {
 
   // ---- บันไดภายในประจำด้าน (ไว้ลงจากกำแพง / กองสำรองขึ้นเสริม) ----
   for (let s = 0; s < 4; s++) {
-    const { n, t } = SIDE_VECS[s];
     const sp = stairPoints(s);
     const dir = sp.top.clone().sub(sp.base);
     const horizontal = dir.clone().setY(0);
     const run = horizontal.length();
     const len = dir.length();
     const midP = sp.base.clone().addScaledVector(dir, 0.5);
+    const lateral = new THREE.Vector3(horizontal.z, 0, -horizontal.x).normalize();
     const angle = Math.atan2(dir.y, run);
     const yaw = Math.atan2(horizontal.x, horizontal.z);
-    // ขั้นไม้จริง — กล่องแต่ละขั้นวางระดับ ไม่ใช้แผ่นลาดแบบทางเลื่อน
-    const stepCount = 18;
+    // ขั้นไม้เป็นแผ่นบางต่อเนื่องจากกำแพง ไม่ใช่กล่องตันสูงจากพื้น
+    const stepCount = 22;
     const stepDepth = run / stepCount + 0.12;
+    const treadThickness = 0.32;
+    const risePerStep = CFG.walkY / stepCount;
     for (let i = 0; i < stepCount; i++) {
       const f = (i + 0.5) / stepCount;
-      const height = Math.max(0.35, CFG.walkY * ((i + 1) / stepCount));
+      const height = CFG.walkY * ((i + 1) / stepCount);
       const p = sp.base.clone().addScaledVector(horizontal, f);
-      const step = new THREE.BoxGeometry(4.2, height, stepDepth);
+      const step = new THREE.BoxGeometry(4.0, treadThickness, stepDepth);
       step.rotateY(yaw);
-      step.translate(p.x, height / 2, p.z);
+      step.translate(p.x, height - treadThickness / 2, p.z);
       push(i % 2 ? C.stair : C.woodDark, step);
+      const riser = new THREE.BoxGeometry(4.0, risePerStep, 0.16);
+      riser.rotateY(yaw);
+      riser.translate(p.x, height - risePerStep / 2, p.z);
+      push(C.woodDark, riser);
     }
     // ชานพักบนกำแพง ช่วยให้จุดขึ้นลงอ่านออกชัด
     const landing = new THREE.BoxGeometry(4.6, 0.5, 3.0);
@@ -157,15 +176,20 @@ export function buildCity(scene) {
       const rail = new THREE.BoxGeometry(0.24, 0.32, len + 0.8);
       rail.rotateX(-angle);
       rail.rotateY(yaw);
-      const rp = midP.clone().addScaledVector(t, side2);
+      const rp = midP.clone().addScaledVector(lateral, side2);
       rail.translate(rp.x, rp.y + 1.0, rp.z);
       push(C.woodDark, rail);
+      const stringer = new THREE.BoxGeometry(0.3, 0.4, len + 0.4);
+      stringer.rotateX(-angle);
+      stringer.rotateY(yaw);
+      stringer.translate(rp.x, rp.y - 0.35, rp.z);
+      push(C.woodDark, stringer);
     }
     // เสาราวแนวตั้งสองข้างเป็นช่วง ๆ
     for (const f of [0.08, 0.3, 0.52, 0.74, 0.96]) {
       const pp = sp.base.clone().addScaledVector(dir, f);
       for (const side2 of [-1.7, 1.7]) {
-        const post = pp.clone().addScaledVector(t, side2);
+        const post = pp.clone().addScaledVector(lateral, side2);
         push(C.woodDark, new THREE.BoxGeometry(0.28, 2.0, 0.28).translate(post.x, pp.y + 0.8, post.z));
       }
     }

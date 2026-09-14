@@ -379,6 +379,32 @@ export class Battle {
     }
   }
 
+  // เมื่อประตูเปิด กองที่กำลังเข้าตีประตูใต้ไม่ควรเดินชนกำแพงต่อ
+  // ส่งเฉพาะหน่วยภาคสนามเข้าประตู; พลธนูและคนที่กำลังปีนยังทำหน้าที่เดิมบนกำแพง
+  routeOpenGateAttackers() {
+    let ordered = 0;
+    for (const company of this.companies) {
+      if (company.kind === 'cav' && company.waitingGate && company.pendingCityTarget) {
+        const target = company.pendingCityTarget.clone();
+        company.waitingGate = false;
+        if (company.orderRide(target, { formation: 'column', stance: 'aggressive' })) ordered++;
+      }
+    }
+
+    const infantry = this.companies.filter((company) => company.kind === 'inf'
+      && company.ctype !== 'archer'
+      && company.mode === 'assault'
+      && company.side === 2
+      && company.aliveSoldiers.length > 0
+      && company.aliveSoldiers.every((soldier) => soldier.zone === 'field' && !soldier.climb)
+      && company.orderable());
+    const destinations = formationDestinations(infantry, new THREE.Vector3(0, 0, 0), 6, 'loose');
+    infantry.forEach((company, index) => {
+      if (company.orderCity(destinations[index], { formation: 'column', stance: 'aggressive' })) ordered++;
+    });
+    return ordered;
+  }
+
   // โล่ที่ยังมีชีวิต (ใช้ตรวจกำบังธนู)
   liveShields() {
     const out = [];
@@ -1531,6 +1557,7 @@ export class Battle {
         this.shake = Math.max(this.shake, 1.6);
         this.onEvent('gate_breached', {});
         this.releaseGateAssaultCompanies(rams);
+        this.routeOpenGateAttackers();
       }
     }
   }
@@ -1557,13 +1584,8 @@ export class Battle {
         for (const s of this.gateOpeners) { s.gateDuty = false; s.intent = 'hunt-city-defenders'; }
         this.gateOpeners.clear();
         this.releaseGateAssaultCompanies();
+        this.routeOpenGateAttackers();
         this.onEvent('gate_open', {});
-        for (const c of this.companies) {
-          if (c.kind === 'cav' && c.waitingGate && c.pendingCityTarget) {
-            c.waitingGate = false;
-            c.orderRide(c.pendingCityTarget);
-          }
-        }
       }
     }
   }

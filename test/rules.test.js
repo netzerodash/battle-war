@@ -6,7 +6,7 @@ import { formationDestinations, unitSlot } from '../src/formation.js';
 import { gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS } from '../src/world.js';
 import { CFG, mulberry32 } from '../src/config.js';
 import { Battle, orderVisual } from '../src/battle.js';
-import { gateDoorAngle } from '../src/city.js';
+import { buildCity, gateDoorAngle } from '../src/city.js';
 import { assaultRoute } from '../src/navigation.js';
 import { fieldRoute, routeLength } from '../src/navigation.js';
 import { createOrder, ORDER_KIND, orderKindFromContext } from '../src/orders.js';
@@ -67,11 +67,53 @@ test('individual formation slots do not overlap', () => {
 });
 
 test('gate routes stay outside the wall ring', () => {
-  for (const side of [0, 1, 3]) {
-    for (const p of gateRoute(side, new THREE.Vector3(10, 0, -90))) {
+  const starts = [
+    new THREE.Vector3(10, 0, -90),
+    new THREE.Vector3(90, 0, 10),
+    new THREE.Vector3(-90, 0, 10),
+  ];
+  for (const [side, start] of [[0, starts[0]], [1, starts[1]], [3, starts[2]]]) {
+    for (const p of gateRoute(side, start)) {
       assert.ok(Math.max(Math.abs(p.x), Math.abs(p.z)) > CFG.wallHalf + CFG.wallThick);
     }
   }
+});
+
+test('gate route follows the current position even when the old assault side is stale', () => {
+  const north = new THREE.Vector3(-24, 0, -90);
+  const route = gateRoute(2, north);
+  assert.ok(route.length >= 2, 'north-side soldiers still need an around-wall route');
+  assert.ok(route[0].x < 0, 'the shorter west route should be selected from the current position');
+});
+
+test('open gate routing chooses the shorter valid side around the wall', () => {
+  const from = new THREE.Vector3(34, 0, -88);
+  const target = new THREE.Vector3(0, 0, 12);
+  const route = fieldRoute(from, target, [0, 0, 0, 0], true);
+  assert.ok(route[0].x > 0, 'the closer east corner should be used');
+  const c = CFG.wallHalf + CFG.wallThick + 4;
+  const longWay = [
+    new THREE.Vector3(-c, 0, -c), new THREE.Vector3(-c, 0, c),
+    new THREE.Vector3(0, 0, CFG.gate.frontPoint),
+    new THREE.Vector3(0, 0, CFG.gate.insidePoint), target,
+  ];
+  assert.ok(routeLength(from, route) < routeLength(from, longWay), 'route should not circle the long side of the city');
+});
+
+test('cavalry outside an open gate keeps a portal route until it physically enters', () => {
+  const cavalry = {
+    ctype: 'cav', aliveSoldiers: [{ chargeReady: false }], formation: 'line', stance: 'aggressive',
+    mode: 'idle', enteredCity: false, pendingCityTarget: null, waitingGate: false,
+    anchor: new THREE.Vector3(26, 0, -90),
+    battle: { gate: { open: true }, time: 1, onEvent() {} },
+    setTactics: Company.prototype.setTactics,
+    buildRideRoute: Company.prototype.buildRideRoute,
+    routeThreats() { return [0, 0, 0, 0]; },
+  };
+  assert.equal(Company.prototype.orderRide.call(cavalry, new THREE.Vector3(0, 0, 10)), true);
+  assert.equal(cavalry.enteredCity, false);
+  assert.ok(cavalry.waypoints.length >= 4);
+  assert.ok(cavalry.waypoints[0].x > 0);
 });
 
 test('field units cannot remain inside a closed wall', () => {
@@ -131,6 +173,21 @@ test('city gate opens from closed to a realistic right angle', () => {
   assert.ok(gateDoorAngle(1) > 1.4 && gateDoorAngle(1) < Math.PI / 2);
 });
 
+test('fully opened gate leaves a clear passage through the south wall', () => {
+  const scene = new THREE.Scene();
+  const city = buildCity(scene);
+  city.doorL.rotation.y = gateDoorAngle(1);
+  city.doorR.rotation.y = -gateDoorAngle(1);
+  scene.updateMatrixWorld(true);
+  const ray = new THREE.Raycaster(
+    new THREE.Vector3(0, 4, 60),
+    new THREE.Vector3(0, 0, -1),
+    0,
+    24,
+  );
+  assert.equal(ray.intersectObject(city.group, true).length, 0);
+});
+
 test('inner stairs have a walkable slope instead of a near-vertical ramp', () => {
   for (let side = 0; side < 4; side++) {
     const { base, top } = stairPoints(side);
@@ -139,7 +196,9 @@ test('inner stairs have a walkable slope instead of a near-vertical ramp', () =>
     assert.ok(Math.atan2(rise, run) < Math.PI / 4);
     const v = SIDE_VECS[side];
     const delta = top.clone().sub(base);
-    assert.ok(Math.abs(v.t.dot(delta)) > Math.abs(v.n.dot(delta)) * 2);
+    assert.ok(v.n.dot(top) >= CFG.wallHalf + 0.8 && v.n.dot(top) <= CFG.wallHalf + 1.6);
+    assert.ok(v.n.dot(base) <= CFG.wallHalf - 3.5);
+    assert.ok(Math.abs(v.t.dot(delta)) > Math.abs(v.n.dot(delta)) * 5.5);
   }
 });
 
@@ -440,4 +499,24 @@ test('a replacement archer crew rearms and enters the city when the gate opens',
   assert.equal(company.gateCrew, false);
   assert.equal(ramRemoved, true);
   assert.equal(entered, true);
+});
+
+test('opening the gate automatically reroutes grounded south assault troops into the city', () => {
+  const entered = [];
+  const make = (overrides = {}) => ({
+    kind: 'inf', ctype: 'spear', mode: 'assault', side: 2, state: 'march', enteredCity: false,
+    aliveSoldiers: [{ zone: 'field' }],
+    orderable() { return true; },
+    orderCity(point) { entered.push({ company: this, point }); return true; },
+    ...overrides,
+  });
+  const south = make();
+  const archer = make({ ctype: 'archer' });
+  const climbing = make({ state: 'climbing', orderable() { return false; } });
+  const otherWall = make({ side: 1 });
+  const battle = { companies: [south, archer, climbing, otherWall] };
+  const count = Battle.prototype.routeOpenGateAttackers.call(battle);
+  assert.equal(count, 1);
+  assert.equal(entered[0].company, south);
+  assert.ok(Math.max(Math.abs(entered[0].point.x), Math.abs(entered[0].point.z)) < CFG.wallHalf);
 });

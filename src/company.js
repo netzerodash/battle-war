@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { worldPoint, sectionCenter, gateFrontPoint, gateInsidePoint, gateRoute, isInsideCity, clampFieldPoint, constrainFieldOutsideWall, SIDE_VECS } from './world.js';
+import { worldPoint, sectionCenter, gateFrontPoint, gateInsidePoint, isInsideCity, clampFieldPoint, constrainFieldOutsideWall, SIDE_VECS } from './world.js';
 import { Soldier } from './soldier.js';
 import { makeLadder, makeRamMesh, makeSoldierMesh } from './models.js';
 import { unitSlot } from './formation.js';
@@ -214,7 +214,6 @@ export class Company {
       target.copy(gateFrontPoint());
       this.battle.onEvent('cav_wait_gate', {});
     } else if (isInsideCity(target)) {
-      this.enteredCity = true;
       this.pendingCityTarget = null;
       this.waitingGate = false;
     }
@@ -238,9 +237,7 @@ export class Company {
     this.setTactics(tactics.formation || 'column', tactics.stance);
     if (this.ctype === 'ram') this.destroyRamMesh();
     this.enteredCity = false;
-    this.waypoints = isInsideCity(this.anchor)
-      ? [point.clone()]
-      : [...gateRoute(this.side, this.anchor), gateFrontPoint(), gateInsidePoint(), point.clone()];
+    this.waypoints = fieldRoute(this.anchor, point, this.routeThreats(), true);
     this.order = createOrder({
       kind: ORDER_KIND.ENTER_GATE, targetPoint: point, targetSide: 2,
       route: this.waypoints, formation: this.formation, stance: this.stance, issuedAt: this.battle.time,
@@ -248,7 +245,7 @@ export class Company {
     this.state = 'cityMarch';
     this.stateT = 0;
     for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
-    if (this.ladder && this.ladder.planted) { this.ladder.planted = false; this.ladder.mesh.visible = false; }
+    if (this.ladder) { this.ladder.planted = false; this.ladder.mesh.visible = false; }
     return true;
   }
 
@@ -348,19 +345,7 @@ export class Company {
   }
 
   buildRideRoute(target) {
-    const inside = isInsideCity(target);
-    if (inside && !this.enteredCity) {
-      this.waypoints = [...gateRoute(this.side, this.anchor), gateFrontPoint(), gateInsidePoint(), target];
-    } else if (inside) {
-      this.waypoints = [target];
-    } else {
-      this.waypoints = fieldRoute(this.anchor, target, this.routeThreats(), this.battle.gate.open);
-      if (this.enteredCity) {
-        // ออกจากเมืองผ่านประตูก่อน
-        this.waypoints.unshift(gateInsidePoint(), gateFrontPoint());
-        this.enteredCity = false;
-      }
-    }
+    this.waypoints = fieldRoute(this.anchor, target, this.routeThreats(), this.battle.gate.open);
   }
 
   // ---------- อัปเดตรายเฟรม ----------
