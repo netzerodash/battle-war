@@ -17,16 +17,16 @@
     <div class="modal">
       <div class="modal-title">⚔️ ศึกล้อมเมืองมังกร</div>
       <div class="modal-sub">เกมสั่งทัพตีเมือง — สงครามจีนโบราณ 3D Low Poly</div>
-      <p>เจ้าคือแม่ทัพฝ่ายโจมตี ทัพเมืองมี <b>192 นาย</b> (หอกเต็มกำแพง + กองสำรองข้างใน) — เป้าหมาย: <b>ล้างทัพเมืองให้หมดและเปิดประตูให้ได้ใน 8 นาที</b> — เมืองฉลาด ปรับยุทธวิธีได้ รุมแบบไม่คิด = ทัพแตกแน่นอน</p>
+      <p>เจ้าคือแม่ทัพฝ่ายโจมตี 1,624 นาย ทัพเมืองมี <b>1,216 นาย</b> รวมพลขนหิน — เป้าหมาย: <b>ล้างทัพเมืองให้หมดและเปิดประตูให้ได้ใน 10 นาที</b> — เมืองฉลาด ปรับยุทธวิธีได้ รุมแบบไม่คิด = ทัพแตกแน่นอน</p>
       <div class="legend">
-        <div><span class="dot red"></span><b>หอก (5 กอง×4 ด้าน)</b> — แบกบันได ปีน ปะทะ หัวใจการตีเมือง</div>
-        <div><span class="dot bronze"></span><b>พลโล่ (2 กอง×4)</b> — เดินช้าแต่กันธนูให้ทัพรอบข้าง (72%) ไต่กำแพงทนกว่า</div>
-        <div><span class="dot green"></span><b>นักธนู (2 กอง×4)</b> — ยิงกดทหารบนกำแพงจากระยะ 62 ม. ทำให้เมืองเบามือ — แต่เปราะ ระวังม้าซอง</div>
-        <div><span class="dot dark"></span><b>รถทุบ (1 คัน×4 ด้าน)</b> — เดินไปทุบประตูใต้ ~50 วิ (หินจากหอประตูกระหน่ำใส่!)</div>
-        <div><span class="dot gold"></span><b>ทหารม้า (4 กอง)</b> — เข้าเมืองทางประตูเท่านั้น ไว้ไล่ล่าเก็บกวาด</div>
+        <div><span class="dot red"></span><b>หอก (20 กอง×4 ด้าน)</b> — แบกบันได ปีน ปะทะ หัวใจการตีเมือง</div>
+        <div><span class="dot bronze"></span><b>พลโล่ (8 กอง×4)</b> — เดินช้าแต่กันธนูให้ทัพรอบข้าง (65%) ไต่กำแพงทนกว่า</div>
+        <div><span class="dot green"></span><b>นักธนู (8 กอง×4)</b> — ยิงกดทหารบนกำแพงจากระยะ 64 ม. ทำให้เมืองเบามือ — แต่เปราะ ระวังม้าซอง</div>
+        <div><span class="dot dark"></span><b>รถทุบ (4 คัน ฝั่งประตูใต้)</b> — ทุบประตู ~56 วิ แล้วลูกเรือบุกเข้าเมือง</div>
+        <div><span class="dot gold"></span><b>ทหารม้า (16 กอง)</b> — เข้าเมืองทางประตูเท่านั้น ไว้ไล่ล่าเก็บกวาด</div>
       </div>
       <ul>
-        <li>🖱️ <b>ลากซ้ายเลือกกอง</b> (Shift เพิ่ม) → <b>คลิกขวาสั่ง</b>: หน้ากำแพง = โจมตี / กลางทุ่ง = หลอกล่อ / ในเมือง = สั่งม้าบุก</li>
+        <li>🖱️ <b>ลากซ้ายเลือกกอง</b> (Shift เพิ่ม) · <b>ดับเบิลคลิก</b> = เลือกกองชนิดเดียวกันใกล้เคียง → <b>คลิกขวาสั่ง</b></li>
         <li>🪨 กองหินบนกำแพง<b>มีจำกัด</b> — พลขนหินต้องแบกขึ้นจากคลังข้างใน กดดันต่อเนื่องเมื่อไหร่ หินจะไปไม่ทัน</li>
         <li>🧠 ผู้บัญชาการเมืองจะ<b>เสริมกำลังข้ามด้าน สลับเป้าหิน และส่งม้าซอง</b>ออกไปฟันนักธนู/รถทุบของเจ้า — ต้องมีหอกคุมนักธนูไว้</li>
         <li>⏱️ กำลังเสริมเมืองใช้เวลาเดินทาง — จังหวะ "ระหว่างเสริม" คือโอกาสทอง อย่ารุมพร้อมกันหมดเพราะเมืองจะรับได้ทุกด้าน</li>
@@ -47,6 +47,7 @@
         <button data-speed="1" class="btn spd active">▶ 1x</button>
         <button data-speed="2" class="btn spd">▶▶ 2x</button>
         <button data-speed="4" class="btn spd">▶▶▶ 4x</button>
+        <button id="btn-unit-view" class="btn spd" title="เข้ามุมมองของทหารที่คลิก" disabled>👁 มุมทหาร</button>
         <button id="btn-sound" class="btn spd" title="เปิด/ปิดเสียง">🔊</button>
         <button id="btn-abort" class="btn danger">ธงขาว</button>
       </div>
@@ -61,6 +62,27 @@
       </div>
       <div class="gline" id="hud-reserves"></div>
       <div class="gline" id="hud-sel-text"></div>
+      <div class="tactical-controls">
+        <label>รูปขบวน
+          <select id="cmd-formation">
+            <option value="line">แนวรบ</option>
+            <option value="column">แถวตอน</option>
+            <option value="shield-front">โล่นำหน้า</option>
+            <option value="loose">กระจายตัว</option>
+          </select>
+        </label>
+        <label>ท่าที
+          <select id="cmd-stance">
+            <option value="aggressive">บุกไล่</option>
+            <option value="hold">รักษาแนว</option>
+            <option value="avoid-arrows">หลบแนวธนู</option>
+          </select>
+        </label>
+      </div>
+      <button id="btn-retreat" class="btn tactical-retreat">↩ ถอนกำลังกลับแนวตั้งต้น</button>
+      <button id="btn-hold-fire" class="btn tactical-retreat">🏹 สลับพักยิงของธนูที่เลือก</button>
+      <button id="btn-focus-combat" class="btn tactical-retreat">⚔ ไปยังจุดปะทะล่าสุด</button>
+      <div class="gline tactical-status" id="hud-tactical-status"></div>
       <div class="legend-mini">
         <span><span class="dot red"></span>หอก</span>
         <span><span class="dot bronze"></span>โล่</span>
@@ -70,7 +92,7 @@
       </div>
     </div>
 
-    <div class="hud-hint" id="hud-hint">ลากซ้าย = เลือกกอง · คลิกขวา = สั่งทัพ · ลากขวา = หมุนกล้อง · ล้อเมาส์ = ซูม · 1-4 = มุมด้าน</div>
+    <div class="hud-hint" id="hud-hint">คลิกตัวทหาร → 👁 มุมทหาร · ลากซ้าย = เลือกกอง · คลิกขวา = สั่งทัพ · Esc = ออกจากมุมทหาร</div>
 
     <!-- แถบควบคุมสำหรับจอสัมผัส -->
     <div id="touchbar" class="hidden">
@@ -88,6 +110,17 @@
     </div>
 
     <div id="toasts"></div>
+
+    <div id="capture-choice" class="capture-choice hidden">
+      <b id="capture-choice-title">ยึดกำแพงแล้ว</b>
+      <span>สั่งทหารบนกำแพง:</span>
+      <div class="row">
+        <button class="btn" data-capture-action="hold">🛡 รักษากำแพง</button>
+        <button class="btn" data-capture-action="reinforce">↔ ช่วยด้านข้าง</button>
+        <button class="btn primary" data-capture-action="descend">⚔ ลงเมือง</button>
+      </div>
+      <small>ถ้าไม่เลือกภายใน 8 วินาที จะไปช่วยกำแพงด้านข้าง</small>
+    </div>
   </div>
 
   <!-- End screen -->

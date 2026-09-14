@@ -24,7 +24,7 @@ export class DefenseSide {
     this.archers = [];
     this.detachedTo = null;
     this.detachCd = 0;
-    this.brainT = Math.random() * 0.5;
+    this.brainT = battle.rng() * 0.5;
 
     // โลจิสติกส์หิน: กองบนกำแพง (roller ใช้จากนี้) + คลังในเมือง (พลขนหินแบกขึ้นมา)
     this.rock = { pile: CFG.rockLogi.pileStart, stock: CFG.rockLogi.stock };
@@ -52,7 +52,7 @@ export class DefenseSide {
   makeSoldier(type, stat, post, utype = type) {
     const s = new Soldier({
       type, faction: 'def', side: -1, utype,
-      hp: stat.hp, speed: CFG.defender.speed, atkCd: stat.atkCd, dmg: stat.dmg,
+      hp: stat.hp, speed: CFG.defender.speed, atkCd: stat.atkCd, dmg: stat.dmg, rng: this.battle.rng,
     });
     s.homePost = post.clone();
     s.pos.copy(post);
@@ -64,7 +64,11 @@ export class DefenseSide {
   }
 
   aliveMelee() { return this.melee.filter((s) => s.alive).length; }
-  aliveCount() { return this.aliveMelee() + this.archers.filter((s) => s.alive).length; }
+  aliveCount() {
+    return this.aliveMelee()
+      + this.archers.filter((s) => s.alive).length
+      + this.carriers.filter((c) => c.s.alive).length;
+  }
 
   addReinforcement(s) {
     s.zone = 'wall';
@@ -80,14 +84,14 @@ export class DefenseSide {
   spawnCarrier(initial = false) {
     const s = new Soldier({
       type: 'carrier', faction: 'def', side: -1, utype: 'carrier',
-      hp: CFG.defender.hp, speed: CFG.defender.speed * 1.05, atkCd: CFG.defender.atkCd, dmg: 1,
+      hp: CFG.defender.hp, speed: CFG.defender.speed * 1.05, atkCd: CFG.defender.atkCd, dmg: 1, rng: this.battle.rng,
     });
     s.zone = 'city';
     s.state = 'order';
     s.pos.copy(this.stockPoint());
     this.battle.group.add(s.mesh);
     s.syncMesh(0);
-    const c = { s, state: initial ? 'toStock' : 'respawn', t: initial ? 0 : 10 };
+    const c = { s, state: initial ? 'waiting' : 'waiting', t: 0 };
     this.carriers.push(c);
     return c;
   }
@@ -97,33 +101,29 @@ export class DefenseSide {
 
   updateCarriers(dt) {
     const L = CFG.rockLogi;
-    for (const c of this.carriers) {
-      if (!c.s.alive) { c.state = 'respawn'; c.t = 10; continue; }
-      if (c.state === 'respawn') {
-        c.t -= dt;
-        if (c.t <= 0) {
-          // เปลี่ยนตัวใหม่ (กำลังคนเมืองยังเหลืออยู่) — แต่ถ้าคลังหมดก็ไม่มีอะไรจะขน
-          c.s = new Soldier({
-            type: 'carrier', faction: 'def', side: -1, utype: 'carrier',
-            hp: CFG.defender.hp, speed: CFG.defender.speed * 1.05, atkCd: CFG.defender.atkCd, dmg: 1,
-          });
-          c.s.zone = 'city';
-          c.s.state = 'order';
-          c.s.pos.copy(this.stockPoint());
-          this.battle.group.add(c.s.mesh);
-          c.s.syncMesh(0);
-          c.state = 'toStock';
-        }
-        continue;
+    const active = this.carriers.filter((c) => c.s.alive && !['waiting'].includes(c.state)).length;
+    if (this.rock.pile <= L.reorderAt && this.rock.stock > 0) {
+      let dispatch = Math.max(0, Math.ceil((L.pileMax - this.rock.pile) / L.carryAmount) - active);
+      for (const c of this.carriers) {
+        if (dispatch <= 0) break;
+        if (c.s.alive && c.state === 'waiting') { c.state = 'toStock'; c.s.intent = 'refill-rocks'; dispatch--; }
       }
+    }
+    for (const c of this.carriers) {
+      if (!c.s.alive) continue;
       if (c.s.stair) continue; // บันไดคุมตำแหน่งอยู่
       const s = c.s;
       switch (c.state) {
+        case 'waiting': {
+          s.state = 'idle';
+          s.intent = 'await-rock-request';
+          break;
+        }
         case 'toStock': {
-          if (this.rock.stock <= 0) { s.state = 'idle'; break; } // คลังหมด — ยืนรอ
+          if (this.rock.stock <= 0) { c.state = 'waiting'; s.state = 'idle'; break; }
           s.state = 'order';
           if (s.stepToward(dt, this.stockPoint(), s.speed, 0.7)) {
-            this.rock.stock--; c.state = 'toStair';
+            this.rock.stock = Math.max(0, this.rock.stock - L.carryAmount); c.state = 'toStair';
           }
           break;
         }
@@ -149,12 +149,12 @@ export class DefenseSide {
         case 'descend': break;
         case 'return': {
           s.state = 'order';
-          if (s.stepToward(dt, this.stockPoint(), s.speed, 0.8)) c.state = 'toStock';
+          if (s.stepToward(dt, this.stockPoint(), s.speed, 0.8)) { c.state = 'waiting'; s.intent = 'await-rock-request'; }
           break;
         }
       }
     }
-    this.carriers = this.carriers.filter((c) => c.s.alive || c.state === 'respawn');
+    this.carriers = this.carriers.filter((c) => c.s.state !== 'dead');
   }
 
   // callback จาก stair channel เมื่อพลขนหินขึ้นถึงยอด
@@ -259,6 +259,8 @@ export class DefenseSide {
     let feint = null, feintD = Infinity;
     let near = null, nearD = Infinity;
     for (const s of this.battle.groundAttackers()) {
+      // ยังไม่รับคำสั่ง = อยู่นอกการปะทะ ธนูเมืองไม่เปิดฉากยิงถึงค่ายตั้งทัพ
+      if (!s.company || s.company.mode === 'idle') continue;
       const d = a.pos.distanceTo(s.pos);
       if (d > CFG.archerRange) continue;
       if (s.utype === 'atkArch') { if (d < duelD) { duel = s; duelD = d; } }
@@ -271,7 +273,7 @@ export class DefenseSide {
     // โล่เป็นเป้าสุดท้าย (กันธนูได้ ยิงเปล่าเปลือง)
     let sh = null, shD = Infinity;
     for (const s of this.battle.groundAttackers()) {
-      if (s.utype !== 'shield') continue;
+      if (s.utype !== 'shield' || !s.company || s.company.mode === 'idle') continue;
       const d = a.pos.distanceTo(s.pos);
       if (d < CFG.archerRange && d < shD) { sh = s; shD = d; }
     }
@@ -351,7 +353,7 @@ export class ReserveForce {
       for (let k = 0; k < CFG.squadSize; k++) {
         const s = new Soldier({
           type: 'def', faction: 'def', side: -1, utype: 'def',
-          hp: CFG.defender.hp, speed: CFG.defender.speed, atkCd: CFG.defender.atkCd, dmg: CFG.defender.dmg,
+          hp: CFG.defender.hp, speed: CFG.defender.speed, atkCd: CFG.defender.atkCd, dmg: CFG.defender.dmg, rng: this.battle.rng,
         });
         s.zone = 'city';
         s.state = 'idle';
@@ -391,9 +393,10 @@ export class ReserveForce {
   }
 
   // กำลังเสริมที่กำลังเดินทาง/ขึ้นบันได (โชว์ใน HUD — ปัจจัยเวลาที่ชัดเจน)
-  enRouteMen() {
+  enRouteMen(side = null) {
     let n = 0;
     for (const sq of this.squads) {
+      if (side !== null && sq.side !== side) continue;
       if (sq.state === 'toStair' || sq.state === 'ascending') {
         for (const s of sq.soldiers) if (s.alive) n++;
       }
@@ -419,13 +422,21 @@ export class ReserveForce {
     for (let s = 0; s < 4; s++) {
       if (B.captured[s]) continue;
       const alive = B.defenses[s].aliveMelee();
-      if (alive < CFG.wallMelee * CFG.ai.reinforceThreshold && alive > CFG.wallMelee * CFG.ai.minReinforceAlive) needs.push(s);
+      const attackers = [...B.wallFighters[s]].filter((u) => u.alive).length;
+      const activeLadders = B.laddersOf(s).filter((l) => l.planted && !l.broken).length;
+      const threat = attackers * 3 + activeLadders;
+      if (threat > 0 && alive < CFG.wallMelee * CFG.ai.reinforceThreshold && alive > CFG.wallMelee * CFG.ai.minReinforceAlive) {
+        needs.push({ side: s, threat });
+      }
     }
+    needs.sort((a, b) => b.threat - a.threat);
     let sent = 0;
-    for (const side of needs) {
+    for (const need of needs) {
       for (const sq of this.squads) {
         if (sent >= CFG.ai.reinforceSquads) break;
-        if (sq.state === 'idle') { sq.state = 'toStair'; sq.side = side; sent++; }
+        if (sq.state === 'idle') {
+          sq.state = 'toStair'; sq.side = need.side; sq.intent = 'reinforce-threatened-wall'; sent++;
+        }
       }
     }
     if (B.invadersInCity() >= 3) {

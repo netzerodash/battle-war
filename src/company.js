@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { worldPoint, sectionCenter, gateFrontPoint, gateInsidePoint, gateRoute, isInsideCity, clampFieldPoint, SIDE_VECS } from './world.js';
+import { worldPoint, sectionCenter, gateFrontPoint, gateInsidePoint, gateRoute, isInsideCity, clampFieldPoint, constrainFieldOutsideWall, SIDE_VECS } from './world.js';
 import { Soldier } from './soldier.js';
 import { makeLadder, makeRamMesh } from './models.js';
+import { unitSlot } from './formation.js';
+import { canUnitClimb } from './rules.js';
+import { assaultRoute, fieldRoute } from './navigation.js';
+import { createOrder, ORDER_KIND, ORDER_PHASE } from './orders.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3();
@@ -31,6 +35,13 @@ export class Company {
     this.pendingCityTarget = null;
     this.waitingGate = false;
     this.volleyPos = null;
+    this.holdFire = false;
+    this.formation = 'line';
+    this.stance = 'aggressive';
+    this.order = null;
+    this.progressSampleT = 0;
+    this.progressPos = spawnAnchor.clone();
+    this.lastReplanAt = -Infinity;
 
     const isCav = ctype === 'cav';
     const bannerType = { spear: 'atkBanner', shield: 'shieldBanner', archer: 'atkArchBanner', ram: 'crewBanner', cav: 'cavBanner' }[ctype];
@@ -46,7 +57,7 @@ export class Company {
       const s = new Soldier({
         type: banner ? bannerType : baseType,
         faction: 'atk', side, kind: isCav ? 'cav' : 'inf', utype: isCav ? 'cav' : ctype,
-        hp: stat.hp, speed: stat.speed, atkCd: stat.atkCd, dmg: stat.dmg,
+        hp: stat.hp, speed: stat.speed, atkCd: stat.atkCd, dmg: stat.dmg, rng: battle.rng,
       });
       s.company = this;
       const col = (i % 5) - 2, row = Math.floor(i / 5);
@@ -73,18 +84,42 @@ export class Company {
 
   get aliveSoldiers() { return this.soldiers.filter((s) => s.alive); }
   get flagPos() { const s = this.soldiers[0]; return s && s.alive ? s.pos : this.anchor; }
-  get isLadderCarrier() { return this.ctype === 'spear' || this.ctype === 'shield'; }
+  // ทหารราบทุกชนิดยกเว้นธนูปีนได้; พลรถทุบใช้บันไดเมื่อไม่ได้ถูกส่งเข้าประตูใต้
+  get isLadderCarrier() { return canUnitClimb(this.ctype); }
 
   orderable() {
     if (this.aliveSoldiers.length === 0) return false;
+    if (['planting', 'climbing', 'replanting'].includes(this.state)) return false;
     if (this.ctype === 'cav' || this.ctype === 'archer' || this.ctype === 'ram') return true;
     // 'done' = กองที่เหลือทหารกระจัดกระจาย (เช่น บุกแล้วเหลือโคจรกลับ) — สั่งใหม่ได้
-    return ['idle', 'hold', 'march', 'done'].includes(this.state);
+    return ['idle', 'hold', 'holdAt', 'march', 'done'].includes(this.state);
   }
 
   // ---------- คำสั่ง ----------
-  orderAssault(assaultSide) {
+  setTactics(formation = this.formation, stance = this.stance) {
+    this.formation = formation;
+    this.stance = stance;
+  }
+
+  beginOrder(kind, target, route, targetSide = null) {
+    this.waypoints = route.map((p) => p.clone());
+    this.order = createOrder({
+      kind, targetPoint: target, targetSide, route,
+      formation: this.formation, stance: this.stance, issuedAt: this.battle.time,
+    });
+    this.progressSampleT = 0;
+    this.progressPos.copy(this.anchor);
+    for (const s of this.aliveSoldiers) s.intent = `${kind}-${this.order.phase}`;
+  }
+
+  routeThreats() {
+    const threats = this.battle.wallThreats();
+    return this.stance === 'avoid-arrows' ? threats.map((n) => n * 2.5) : threats;
+  }
+
+  orderAssault(assaultSide, tactics = {}) {
     if (!this.orderable()) return false;
+    this.setTactics(tactics.formation, tactics.stance);
     this.side = assaultSide;
     this.mode = 'assault';
 
@@ -93,26 +128,34 @@ export class Company {
       this.plantT = this.battle.assignPlantSlot(assaultSide, 'archer');
       this.volleyPos = worldPoint(assaultSide, this.plantT * 0.9, CFG.unit.atkArch.standDist, 0);
       this.dest = this.volleyPos;
+      const route = assaultRoute(this.anchor, assaultSide, this.dest, this.routeThreats());
+      this.beginOrder(ORDER_KIND.ASSAULT_WALL, this.dest, route, assaultSide);
       this.state = 'march';
       this.stateT = 0;
       for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
       return true;
     }
 
-    if (this.ctype === 'ram') {
+    if (this.ctype === 'ram' && assaultSide === 2 && this.ramMesh && this.ramHp > 0) {
       // รถทุบ: มุ่งหน้าสู่ประตูเมืองเสมอ
       this.state = 'march';
       this.stateT = 0;
       this.dest = gateFrontPoint().addScaledVector(SIDE_VECS[2].n, -1.5);
+      const route = assaultRoute(this.anchor, assaultSide, this.dest, this.routeThreats());
+      this.beginOrder(ORDER_KIND.ASSAULT_WALL, this.dest, route, assaultSide);
       for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
       return true;
     }
+
+    if (this.ctype === 'ram') this.destroyRamMesh();
 
     // หอก / โล่ — แบกบันไดเข้าโจมตี
     this.plantT = this.battle.assignPlantSlot(assaultSide, 'ladder');
     if (!this.ladder) this.buildLadder(assaultSide, this.plantT);
     else { this.ladder.side = assaultSide; this.resetLadderTo(assaultSide, this.plantT); }
     this.dest = worldPoint(assaultSide, this.plantT, CFG.wallHalf + CFG.wallThick + CFG.ladder.baseDist + 1.8, 0);
+    const route = assaultRoute(this.anchor, assaultSide, this.dest, this.routeThreats());
+    this.beginOrder(ORDER_KIND.ASSAULT_WALL, this.dest, route, assaultSide);
     this.state = 'march';
     this.stateT = 0;
     for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
@@ -142,20 +185,23 @@ export class Company {
     l.planted = false; l.broken = false;
   }
 
-  orderHold(point) {
+  orderHold(point, tactics = {}) {
     if (!this.orderable()) return false;
+    this.setTactics(tactics.formation, tactics.stance);
     this.mode = 'hold';
     this.state = 'march';
     this.stateT = 0;
     this.dest = clampFieldPoint(point.clone());
+    this.beginOrder(ORDER_KIND.HOLD, this.dest, fieldRoute(this.anchor, this.dest, this.routeThreats(), this.battle.gate.open));
     for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
     if (this.ladder && this.ladder.planted) { this.ladder.planted = false; this.ladder.mesh.visible = false; }
     return true;
   }
 
   // กองม้า: ขี่ไปจุดหมาย (เส้นทางเข้าเมืองต้องผ่านประตู)
-  orderRide(point) {
+  orderRide(point, tactics = {}) {
     if (this.ctype !== 'cav' || this.aliveSoldiers.length === 0) return false;
+    this.setTactics(tactics.formation || 'line', tactics.stance);
     this.mode = 'ride';
     const target = point.clone();
     if (isInsideCity(target) && !this.battle.gate.open) {
@@ -169,22 +215,59 @@ export class Company {
       this.waitingGate = false;
     }
     this.buildRideRoute(target);
+    for (const s of this.aliveSoldiers) s.chargeReady = true;
+    this.order = createOrder({
+      kind: isInsideCity(point) ? ORDER_KIND.ENTER_GATE : ORDER_KIND.MOVE,
+      targetPoint: point, targetSide: isInsideCity(point) ? 2 : null,
+      route: this.waypoints || [], formation: this.formation, stance: this.stance, issuedAt: this.battle.time,
+    });
     this.state = 'ride';
     this.stateT = 0;
     return true;
   }
 
   // ทหารราบเดินเข้าเมืองผ่านประตู (ได้เมื่อประตูเปิดแล้วเท่านั้น)
-  orderCity(point) {
-    if (this.kind !== 'inf' || this.ctype === 'ram' || this.ctype === 'archer') return false;
+  orderCity(point, tactics = {}) {
+    if (this.kind !== 'inf' || this.ctype === 'archer') return false;
     if (!this.battle.gate.open || !this.orderable() || this.aliveSoldiers.length === 0) return false;
     this.mode = 'city';
+    this.setTactics(tactics.formation || 'column', tactics.stance);
+    if (this.ctype === 'ram') this.destroyRamMesh();
     this.enteredCity = false;
-    this.waypoints = [...gateRoute(this.side, this.anchor), gateFrontPoint(), gateInsidePoint(), point.clone()];
+    this.waypoints = isInsideCity(this.anchor)
+      ? [point.clone()]
+      : [...gateRoute(this.side, this.anchor), gateFrontPoint(), gateInsidePoint(), point.clone()];
+    this.order = createOrder({
+      kind: ORDER_KIND.ENTER_GATE, targetPoint: point, targetSide: 2,
+      route: this.waypoints, formation: this.formation, stance: this.stance, issuedAt: this.battle.time,
+    });
     this.state = 'cityMarch';
     this.stateT = 0;
     for (const s of this.aliveSoldiers) { s.state = 'march'; s.zone = 'field'; }
     if (this.ladder && this.ladder.planted) { this.ladder.planted = false; this.ladder.mesh.visible = false; }
+    return true;
+  }
+
+  orderRetreat() {
+    const alive = this.aliveSoldiers;
+    if (!alive.length || alive.some((s) => s.zone === 'wall' || s.zone === 'stair' || s.climb)) return false;
+    this.setTactics('column', 'hold');
+    this.mode = 'retreat';
+    this.dest = this.spawnBase.clone();
+    if (this.ctype === 'cav') {
+      this.buildRideRoute(this.dest);
+      this.order = createOrder({
+        kind: ORDER_KIND.RETREAT, targetPoint: this.dest, route: this.waypoints,
+        formation: this.formation, stance: this.stance, issuedAt: this.battle.time,
+      });
+      this.state = 'ride';
+    } else {
+      const route = fieldRoute(this.anchor, this.dest, this.routeThreats(), this.battle.gate.open);
+      this.beginOrder(ORDER_KIND.RETREAT, this.dest, route);
+      this.state = isInsideCity(this.anchor) ? 'cityMarch' : 'march';
+    }
+    this.stateT = 0;
+    for (const s of alive) { s.state = 'march'; s.intent = 'retreating'; }
     return true;
   }
 
@@ -195,7 +278,7 @@ export class Company {
     } else if (inside) {
       this.waypoints = [target];
     } else {
-      this.waypoints = [clampFieldPoint(target)];
+      this.waypoints = fieldRoute(this.anchor, target, this.routeThreats(), this.battle.gate.open);
       if (this.enteredCity) {
         // ออกจากเมืองผ่านประตูก่อน
         this.waypoints.unshift(gateInsidePoint(), gateFrontPoint());
@@ -217,11 +300,12 @@ export class Company {
         break;
 
       case 'march': {
-        _v.subVectors(this.dest, this.anchor); _v.y = 0;
+        const marchTarget = this.waypoints?.length ? this.waypoints[0] : this.dest;
+        _v.subVectors(marchTarget, this.anchor); _v.y = 0;
         const d = _v.length();
         const spd = this.ctype === 'ram' ? CFG.unit.ram.speed : 2.6;
         if (d > 0.4) this.anchor.addScaledVector(_v.normalize(), Math.min(d, spd * dt));
-        this.followSlots(dt, alive);
+        this.followSlots(dt, alive, marchTarget);
 
         if (this.ladder && !this.ladder.planted && !this.ladder.broken && this.mode === 'assault') {
           const m = this.ladder.mesh;
@@ -233,11 +317,22 @@ export class Company {
           this.ramMesh.position.set(this.anchor.x, 0, this.anchor.z);
         }
         if (d <= 0.4) {
+          if (this.waypoints?.length) {
+            this.waypoints.shift();
+            if (this.order) {
+              this.order.routeIndex++;
+              this.order.phase = this.waypoints.length > 1 ? ORDER_PHASE.TRANSIT : ORDER_PHASE.APPROACH;
+            }
+            if (this.waypoints.length > 0) break;
+          }
           if (this.mode === 'assault') {
             if (this.ctype === 'archer') { this.state = 'volley'; }
             else if (this.ctype === 'ram') { this.state = 'battering'; this.stateT = 0; this.battle.onEvent('ram_ready', {}); }
             else { this.state = 'planting'; this.stateT = 0; this.gatherTargets(); }
-          } else { this.state = 'hold'; }
+          } else {
+            this.state = 'hold';
+            if (this.order) this.order.phase = ORDER_PHASE.COMPLETE;
+          }
         }
         break;
       }
@@ -301,22 +396,32 @@ export class Company {
 
       case 'ride': {
         let done = true;
-        for (const s of alive) {
+        for (let i = 0; i < alive.length; i++) {
+          const s = alive[i];
           const wp = this.waypoints && this.waypoints.length ? this.waypoints[0] : this.dest;
           if (!wp) break;
-          if (!s.stepToward(dt, wp, CFG.unit.cav.speed, 2.2)) done = false;
+          const final = !this.waypoints || this.waypoints.length <= 1;
+          const target = this.routeSlot(wp, i, alive.length, final, 2.6);
+          if (!this.stepUnit(s, dt, target, CFG.unit.cav.speed, 1.0)) done = false;
+          if (s.zone === 'field') constrainFieldOutsideWall(s.pos, this.battle.gate.open);
           if (isInsideCity(s.pos)) {
-            if (s.zone === 'field') s.zone = 'city';
+            if (s.zone === 'field') {
+              s.zone = 'city';
+              this.battle.onCavEnteredCity(s);
+            }
             if (!this.enteredCity) { this.enteredCity = true; this.battle.onEvent('cav_enter', {}); }
           } else if (s.zone === 'city') {
             s.zone = 'field';
+            this.battle.onCavLeftCity(s);
           }
         }
+        this.updateAnchor(alive);
         if (this.waypoints && this.waypoints.length && this.anchorCloseTo(this.waypoints[0])) {
           this.waypoints.shift();
+          if (this.order) { this.order.routeIndex++; this.order.phase = this.waypoints.length > 1 ? ORDER_PHASE.TRANSIT : ORDER_PHASE.APPROACH; }
           if (this.waypoints.length === 0) { this.state = 'holdAt'; this.dest = null; }
         }
-        if (done && (!this.waypoints || this.waypoints.length <= 1)) this.state = 'holdAt';
+        if (done && (!this.waypoints || this.waypoints.length <= 1)) { this.state = 'holdAt'; if (this.order) this.order.phase = ORDER_PHASE.COMPLETE; }
         break;
       }
 
@@ -328,10 +433,14 @@ export class Company {
       case 'cityMarch': {
         // ราบเดินเข้าเมืองผ่านประตู (เปิดแล้ว) — เข้าไปแล้วกลายเป็นนักรบในเมือง
         let done = true;
-        for (const s of alive) {
+        for (let i = 0; i < alive.length; i++) {
+          const s = alive[i];
           const wp = this.waypoints && this.waypoints.length ? this.waypoints[0] : this.dest;
           if (!wp) break;
-          if (!s.stepToward(dt, wp, s.speed, 0.8)) done = false;
+          const final = !this.waypoints || this.waypoints.length <= 1;
+          const target = this.routeSlot(wp, i, alive.length, final, 1.5);
+          if (!this.stepUnit(s, dt, target, s.speed, 0.7)) done = false;
+          if (s.zone === 'field') constrainFieldOutsideWall(s.pos, this.battle.gate.open);
           if (isInsideCity(s.pos)) {
             if (s.zone === 'field') { s.zone = 'city'; this.battle.onInfEnteredCity(s); }
           } else if (s.zone === 'city') {
@@ -339,28 +448,91 @@ export class Company {
             this.battle.onInfLeftCity(s);
           }
         }
+        this.updateAnchor(alive);
         if (this.waypoints && this.waypoints.length && this.anchorCloseTo(this.waypoints[0])) {
           this.waypoints.shift();
+          if (this.order) { this.order.routeIndex++; this.order.phase = this.waypoints.length > 1 ? ORDER_PHASE.TRANSIT : ORDER_PHASE.APPROACH; }
           if (this.waypoints.length === 0) { this.state = 'holdAt'; this.dest = null; }
         }
-        if (done && (!this.waypoints || this.waypoints.length <= 1)) this.state = 'holdAt';
+        if (done && (!this.waypoints || this.waypoints.length <= 1)) { this.state = 'holdAt'; if (this.order) this.order.phase = ORDER_PHASE.COMPLETE; }
         break;
       }
     }
+    this.trackProgress(dt);
+  }
+
+  stepUnit(s, dt, target, speed, arriveR) {
+    return this.battle.stepGroundUnit
+      ? this.battle.stepGroundUnit(s, dt, target, speed, arriveR)
+      : s.stepToward(dt, target, speed, arriveR);
+  }
+
+  trackProgress(dt) {
+    if (!['march', 'ride', 'cityMarch'].includes(this.state) || !this.order) return;
+    this.progressSampleT += dt;
+    if (this.progressSampleT < CFG.movement.stuckSample) return;
+    const moved = this.anchor.distanceTo(this.progressPos);
+    this.order.stuckFor = moved < CFG.movement.stuckMinProgress
+      ? this.order.stuckFor + this.progressSampleT
+      : Math.max(0, this.order.stuckFor - this.progressSampleT * 2);
+    this.progressPos.copy(this.anchor);
+    this.progressSampleT = 0;
+    if (this.order.stuckFor < CFG.movement.stuckTimeout) return;
+    if (this.battle.time - this.lastReplanAt < CFG.movement.replanCooldown) return;
+    this.replanCurrentOrder();
+  }
+
+  replanCurrentOrder() {
+    if (!this.order?.targetPoint) return;
+    let route;
+    if (this.order.kind === ORDER_KIND.ASSAULT_WALL) {
+      route = assaultRoute(this.anchor, this.order.targetSide ?? this.side, this.order.targetPoint, this.routeThreats());
+    } else {
+      route = fieldRoute(this.anchor, this.order.targetPoint, this.routeThreats(), this.battle.gate.open);
+    }
+    this.waypoints = route.map((p) => p.clone());
+    this.order.route = route.map((p) => p.clone());
+    this.order.routeIndex = 0;
+    this.order.replanCount++;
+    this.order.stuckFor = 0;
+    this.order.waitingReason = 'กำลังหาเส้นทางใหม่';
+    this.lastReplanAt = this.battle.time;
+    for (const s of this.aliveSoldiers) s.intent = 'replanning-route';
   }
 
   anchorCloseTo(p) { return this.anchor.distanceTo(p) < 3.5; }
 
-  followSlots(dt, alive) {
-    const v = SIDE_VECS[this.side];
+  updateAnchor(alive = this.aliveSoldiers) {
+    if (!alive.length) return;
+    this.anchor.set(0, 0, 0);
+    for (const s of alive) this.anchor.add(s.pos);
+    this.anchor.multiplyScalar(1 / alive.length).setY(0);
+  }
+
+  routeSlot(waypoint, index, count, spread, spacing) {
+    if (!spread) return waypoint;
+    const forward = _v.copy(waypoint).sub(this.anchor).setY(0);
+    if (forward.lengthSq() < 0.001) forward.copy(SIDE_VECS[this.side].n).multiplyScalar(-1);
+    forward.normalize();
+    const right = new THREE.Vector3(forward.z, 0, -forward.x);
+    const slot = unitSlot(index, count, spacing, this.formation);
+    return waypoint.clone().addScaledVector(right, slot.lateral).addScaledVector(forward, slot.depth);
+  }
+
+  followSlots(dt, alive, destination = this.dest) {
+    const forward = destination ? destination.clone().sub(this.anchor).setY(0) : SIDE_VECS[this.side].n.clone().multiplyScalar(-1);
+    if (forward.lengthSq() < 0.001) forward.copy(SIDE_VECS[this.side].n).multiplyScalar(-1);
+    forward.normalize();
+    const right = new THREE.Vector3(forward.z, 0, -forward.x);
     const sp = this.kind === 'cav' ? 2.6 : this.ctype === 'ram' ? 2.2 : 1.5;
     for (let i = 0; i < alive.length; i++) {
       const s = alive[i];
-      const col = (i % 5) - 2, row = Math.floor(i / 5);
+      const slot = unitSlot(i, alive.length, sp, this.formation);
       _v.copy(this.anchor)
-        .addScaledVector(v.t, col * sp)
-        .addScaledVector(v.n, row * sp);
-      s.stepToward(dt, _v, s.speed, 0.6);
+        .addScaledVector(right, slot.lateral)
+        .addScaledVector(forward, slot.depth);
+      this.stepUnit(s, dt, _v, s.speed, 0.6);
+      constrainFieldOutsideWall(s.pos, this.battle.gate.open);
       if (s.zone === 'field') s.pos.y = 0;
     }
   }

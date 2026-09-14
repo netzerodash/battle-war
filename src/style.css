@@ -70,6 +70,7 @@ body:not(.touch) #touchbar { display: none !important; }
 }
 .btn:hover { background: #3a2c1c; }
 .btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: .42; cursor: not-allowed; transform: none; }
 .btn.primary { background: var(--red); border-color: #d9a441; font-weight: 700; }
 .btn.primary:hover { background: #c03e34; }
 .btn.danger { border-color: #a03028; color: #ffb0a8; }
@@ -148,6 +149,8 @@ body:not(.touch) #touchbar { display: none !important; }
 .hud-card .line b { color: var(--text); }
 .capbar { height: 6px; background: #000; border-radius: 3px; margin-top: 5px; overflow: hidden; }
 .capbar > div { height: 100%; background: var(--blue); width: 0%; transition: width .2s; }
+#hud-gate .capbar > div { background: linear-gradient(90deg, #b52e2e, #e56a3a); }
+#hud-gate .capbar > div.damaged { box-shadow: 0 0 8px rgba(229, 106, 58, .7); }
 
 .hud-global {
   position: fixed; right: 12px; top: 76px;
@@ -163,6 +166,22 @@ body:not(.touch) #touchbar { display: none !important; }
 .hud-global .gline { color: var(--dim); }
 .hud-global .gline b { color: var(--text); }
 .hud-global .capbar { margin-top: 2px; }
+.tactical-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-top: 1px solid var(--panel-line); padding-top: 6px; }
+.tactical-controls label { color: var(--dim); font-size: 10.5px; display: flex; flex-direction: column; gap: 2px; }
+.tactical-controls select { font: inherit; font-size: 11px; color: var(--text); background: #241b12; border: 1px solid var(--panel-line); border-radius: 5px; padding: 3px; }
+.tactical-status { min-height: 16px; font-size: 11px; }
+.tactical-status.warn { color: #ffad72 !important; }
+.tactical-retreat { width: 100%; padding: 5px 7px; font-size: 11px; }
+
+.capture-choice {
+  position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%);
+  z-index: 42; min-width: 520px; padding: 12px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  background: rgba(20, 14, 9, .96); border: 2px solid var(--blue); border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.55);
+}
+.capture-choice b { color: #8fc3ff; }
+.capture-choice small { color: var(--dim); }
 
 .hud-hint {
   position: fixed; bottom: 10px; right: 14px;
@@ -235,6 +254,11 @@ body:not(.touch) #touchbar { display: none !important; }
   .capbar { height: 4px; margin-top: 3px; }
 
   .hud-global { right: 6px; top: 48px; width: 148px; padding: 5px 8px; font-size: 10px; gap: 3px; }
+  .tactical-controls { grid-template-columns: 1fr; gap: 3px; }
+  .tactical-controls label { font-size: 9px; }
+  .tactical-controls select { font-size: 9px; padding: 1px; }
+  .capture-choice { min-width: min(94vw, 520px); bottom: 58px; }
+  .capture-choice .row { flex-wrap: wrap; gap: 4px; }
   .legend-mini { gap: 6px; font-size: 9.5px; }
 
   .hud-hint { display: none; }

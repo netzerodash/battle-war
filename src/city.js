@@ -129,56 +129,61 @@ export function buildCity(scene) {
     const { n, t } = SIDE_VECS[s];
     const sp = stairPoints(s);
     const dir = sp.top.clone().sub(sp.base);
+    const horizontal = dir.clone().setY(0);
+    const run = horizontal.length();
     const len = dir.length();
     const midP = sp.base.clone().addScaledVector(dir, 0.5);
-    const angle = Math.atan2(dir.y, Math.hypot(dir.x, dir.z));
-    const yaw = Math.atan2(dir.x, dir.z);
-    // พื้นลาด
-    const ramp = new THREE.BoxGeometry(3.6, 0.45, len + 1.4);
-    ramp.rotateX(-angle);
-    ramp.rotateY(yaw);
-    ramp.translate(midP.x, midP.y - 0.28, midP.z);
-    push(C.stair, ramp);
-    // ราวบันไดสองข้าง
+    const angle = Math.atan2(dir.y, run);
+    const yaw = Math.atan2(horizontal.x, horizontal.z);
+    // ขั้นไม้จริง — กล่องแต่ละขั้นวางระดับ ไม่ใช้แผ่นลาดแบบทางเลื่อน
+    const stepCount = 18;
+    const stepDepth = run / stepCount + 0.12;
+    for (let i = 0; i < stepCount; i++) {
+      const f = (i + 0.5) / stepCount;
+      const height = Math.max(0.35, CFG.walkY * ((i + 1) / stepCount));
+      const p = sp.base.clone().addScaledVector(horizontal, f);
+      const step = new THREE.BoxGeometry(4.2, height, stepDepth);
+      step.rotateY(yaw);
+      step.translate(p.x, height / 2, p.z);
+      push(i % 2 ? C.stair : C.woodDark, step);
+    }
+    // ชานพักบนกำแพง ช่วยให้จุดขึ้นลงอ่านออกชัด
+    const landing = new THREE.BoxGeometry(4.6, 0.5, 3.0);
+    landing.rotateY(yaw);
+    landing.translate(sp.top.x, CFG.walkY - 0.25, sp.top.z);
+    push(C.stair, landing);
+    // ราวบันไดสองข้างวางตามความลาด
     for (const side2 of [-1.7, 1.7]) {
-      const rail = new THREE.BoxGeometry(0.22, 0.9, len + 1.4);
+      const rail = new THREE.BoxGeometry(0.24, 0.32, len + 0.8);
       rail.rotateX(-angle);
       rail.rotateY(yaw);
       const rp = midP.clone().addScaledVector(t, side2);
-      rail.translate(rp.x, rp.y + 0.35, rp.z);
+      rail.translate(rp.x, rp.y + 1.0, rp.z);
       push(C.woodDark, rail);
     }
-    // เสาค้ำ
-    for (const f of [0.3, 0.7]) {
+    // เสาราวแนวตั้งสองข้างเป็นช่วง ๆ
+    for (const f of [0.08, 0.3, 0.52, 0.74, 0.96]) {
       const pp = sp.base.clone().addScaledVector(dir, f);
-      push(C.woodDark, new THREE.BoxGeometry(0.3, pp.y, 0.3).translate(pp.x, pp.y / 2, pp.z));
+      for (const side2 of [-1.7, 1.7]) {
+        const post = pp.clone().addScaledVector(t, side2);
+        push(C.woodDark, new THREE.BoxGeometry(0.28, 2.0, 0.28).translate(post.x, pp.y + 0.8, post.z));
+      }
     }
   }
 
-  // ---- วังกลางเมือง (3 ชั้น) ----
-  bx(C.stone, 24, 1.2, 24, 0, 0.6, 0);
-  bx(C.red, 16, 4.8, 16, 0, 3.6, 0);
-  for (const dx of [-1, 1]) for (const dz of [-1, 1]) {
-    cy(C.redDark, 0.34, 0.38, 4.8, 6, dx * 8.2, 3.6, dz * 8.2);
+  // ---- ลานบัญชาการกลางเมืองแบบเปิด — ไม่มีอาคารทึบบังการต่อสู้ ----
+  bx(C.stone, 25, 0.45, 25, 0, 0.225, 0);
+  bx(C.redDark, 21, 0.18, 0.6, 0, 0.55, -10.5);
+  bx(C.redDark, 21, 0.18, 0.6, 0, 0.55, 10.5);
+  bx(C.redDark, 0.6, 0.18, 21, -10.5, 0.55, 0);
+  bx(C.redDark, 0.6, 0.18, 21, 10.5, 0.55, 0);
+  // เสาธงเตี้ยอยู่ริมลาน ไม่บังยูนิตจากกล้องด้านบน
+  for (const x of [-9, 9]) {
+    cy(C.woodDark, 0.1, 0.12, 5, 6, x, 2.5, -9);
+    push(C.banner, new THREE.BoxGeometry(1.5, 0.9, 0.04).translate(x + 0.75, 4.2, -9));
   }
-  cn(C.roof, 13.5, 4.2, 4, 0, 8.1, 0, Math.PI / 4);
-  bx(C.red, 10.5, 3.6, 10.5, 0, 10, 0);
-  cn(C.roofDark, 8.8, 3.6, 4, 0, 13.6, 0, Math.PI / 4);
-  bx(C.red, 6.5, 2.6, 6.5, 0, 14.9, 0);
-  cn(C.roof, 5.2, 2.8, 4, 0, 17.6, 0, Math.PI / 4);
-  cn(C.gold, 0.7, 1.6, 4, 0, 19.8, 0, Math.PI / 4);
 
-  // ---- บ้านเรือนในเมือง ----
-  const houses = [
-    [-13, -14], [12, -15], [-17, 8], [15, 9], [-26, -4], [25, 2],
-    [-2, -22], [4, 24], [-27, 18], [26, -19], [21, 24], [-22, -25], [27, 27], [-28, 28],
-    [-9, 14], [9, 15],
-  ];
-  for (const [hx, hz] of houses) {
-    const w = 3.6 + ((hx * 7 + hz) % 3), d = 3.2 + ((hx + hz) % 3), h = 2.3 + ((hx * 3 + hz) % 3) * 0.35;
-    bx(C.houseWall, w, h, d, hx, h / 2, hz, ((hx * 7 + hz) % 3) * 0.08);
-    cn(C.houseRoof, Math.max(w, d) * 0.82, 1.6, 4, hx, h + 0.8, hz, Math.PI / 4);
-  }
+  // ลานเมืองตั้งใจเปิดโล่งทั้งหมด เพื่อให้เห็นเส้นทางและการไล่ล่าของทหารจากกล้อง RTS
 
   // ---- ต้นไม้ ----
   function tree(x, z, s = 1) {
@@ -207,16 +212,31 @@ export function buildCity(scene) {
   const gateGroup = new THREE.Group();
   const doorMat = new THREE.MeshLambertMaterial({ color: C.redDark, flatShading: true });
   const studMat = new THREE.MeshLambertMaterial({ color: C.gold, flatShading: true });
+  const braceMat = new THREE.MeshLambertMaterial({ color: C.woodDark, flatShading: true });
   const makeDoor = (sign) => {
     const pivot = new THREE.Group();
-    pivot.position.set(sign * 0.35, 0, outer + 0.55);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(4.7, 9.4, 0.55), doorMat);
-    door.position.set(-sign * 2.35, 4.7, 0);
+    // บานพับอยู่ชิดเสาประตู ส่วนตัวบานยื่นกลับเข้าหากึ่งกลาง
+    pivot.position.set(sign * 5.05, 0, outer + 0.55);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(5.05, 9.4, 0.55), doorMat);
+    door.position.set(-sign * 2.525, 4.7, 0);
     door.castShadow = true;
     pivot.add(door);
+    // คานขวางด้านหน้า ทำให้ดูเป็นประตูไม้หนักแทนแผ่นเรียบ
+    for (const y of [1.15, 4.7, 8.25]) {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.42, 0.22), braceMat);
+      beam.position.set(-sign * 2.525, y, 0.39);
+      beam.castShadow = true;
+      pivot.add(beam);
+    }
+    // แกนบานพับบน/ล่าง
+    for (const y of [1.1, 8.3]) {
+      const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.75, 8), studMat);
+      hinge.position.set(0, y, 0);
+      pivot.add(hinge);
+    }
     for (let r = 0; r < 4; r++) for (let cc = 0; cc < 2; cc++) {
       const stud = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.15), studMat);
-      stud.position.set(-sign * (0.9 + cc * 2.4), 1.6 + r * 2.2, sign * 0.36);
+      stud.position.set(-sign * (1.25 + cc * 2.5), 1.6 + r * 2.2, 0.39);
       pivot.add(stud);
     }
     gateGroup.add(pivot);
@@ -255,7 +275,13 @@ export function animateCityFlags(sides, dt) {
 
 // เปิดประตู — บานสองข้างบานออก
 export function openGateDoors(doorL, doorR, k) {
-  const a = Math.min(1, k) * 2.1;
+  const a = gateDoorAngle(k);
   doorL.rotation.y = a;
   doorR.rotation.y = -a;
+}
+
+export function gateDoorAngle(k) {
+  const t = THREE.MathUtils.clamp(k, 0, 1);
+  const eased = t * t * (3 - 2 * t);
+  return eased * 1.48;
 }

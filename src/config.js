@@ -11,14 +11,14 @@ export const CFG = {
 
   spawnDist: 90,           // จุดตั้งทัพเริ่มเกม
 
-  // ---------- กองทัพฝ่ายโจมตี: ด้านละ 40 กอง 4 ประเภท ----------
+  // ---------- กองทัพฝ่ายโจมตี: ราบปกติด้านละ 36 กอง + รถทุบเฉพาะด้านใต้ ----------
   army: {
     composition: [
       ...Array(20).fill('spear'), // พลหอก — แบกบันได ปีน ปะทะ
       ...Array(8).fill('shield'), // พลโล่ — กำบังธนูให้ทัพ เดินช้า แกร่ง
       ...Array(8).fill('archer'), // นักธนู — ยิงกดกำแพงจากระยะ
-      ...Array(4).fill('ram'),    // พลรถทุบ — เครื่องทุบประตูเมือง (ใช้ได้ที่ประตูใต้เท่านั้น)
     ],
+    ramCompanies: 4,             // รถทุบทั้งหมดตั้งทัพเฉพาะด้านใต้หน้าประตู
     cavalryCompanies: 16,
     cavalryPerCompany: 10,
   },
@@ -26,7 +26,7 @@ export const CFG = {
   unit: {
     spear: { hp: 6, dmg: 1, atkCd: 0.95, speed: 3.6, climb: 1.7 },
     shield: { hp: 7, dmg: 1, atkCd: 0.9, speed: 2.9, climb: 1.5, coverRadius: 4.2, coverChance: 0.65 },
-    atkArch: { hp: 3, dmg: 1, atkCd: 5.0, range: 64, projSpeed: 30, gravity: 10, standDist: 96, speed: 3.4 },
+    atkArch: { hp: 3, dmg: 1, atkCd: 5.0, range: 64, projSpeed: 30, gravity: 10, standDist: 88, speed: 3.4 },
     cav: { hp: 7, dmg: 2, atkCd: 1.0, speed: 8.6 },
     ram: { crew: 6, crewHp: 5, ramHp: 200, batterRate: 0.018, speed: 1.7, rockDmg: 20 },
   },
@@ -35,13 +35,14 @@ export const CFG = {
   wallMelee: 64,
   wallArchers: 24,
   archerCd: 2.4,
-  archerRange: 52,          // ยาวพอถึงนักธนูฝ่ายบุก (ระยะปะทะธนู)
+  archerRange: 45,          // ไม่ถึงแนวตั้งทัพเริ่มต้น แต่ยิงโต้ธนูที่เข้าประจำตำแหน่งได้
   defender: { hp: 9, dmg: 1, atkCd: 1.3, speed: 2.4 },
   archerStat: { hp: 3, dmg: 1, atkCd: 2.4, speed: 1.4 },
 
   // โลจิสติกส์หิน — กองหินบนกำแพงหมดต้องให้พลขนหินแบกขึ้นจากคลัง
   rockLogi: {
     pileStart: 30, pileMax: 45,
+    reorderAt: 20,
     stock: 800,
     carriers: 16, carryAmount: 4,
     stairSpeed: 4.0, spacing: 1.1,
@@ -85,6 +86,24 @@ export const CFG = {
 
   maxAssaultPerSide: 40,
   descendAtOnce: 24,   // จำนวนลงบันไดในพร้อมกันต่อด้าน
+
+  movement: {
+    spatialCell: 4,
+    infantryRadius: 0.78,
+    cavalryRadius: 1.35,
+    separationStrength: 0.82,
+    stuckSample: 0.5,
+    stuckMinProgress: 0.12,
+    stuckTimeout: 1.8,
+    replanCooldown: 1.2,
+  },
+
+  combat: {
+    infantryCapacity: 3,
+    cavalryCapacity: 2,
+    chokeCapacity: 2,
+    detectionRange: 26,
+  },
 };
 
 export const SIDE_NAMES = ['เหนือ', 'ตะวันออก', 'ใต้', 'ตะวันตก'];

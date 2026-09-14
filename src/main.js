@@ -29,8 +29,17 @@ let battle = null;
 let speed = 1;
 let lastSpeed = 1;
 let hudTimer = 0;
+let simAccumulator = 0;
+const SIM_STEP = 1 / 30;
+let inspectedSoldier = null;
+let unitViewSoldier = null;
+const unitViewButton = document.getElementById('btn-unit-view');
 const hudEls = UI.buildHUD();
 const clock = new THREE.Clock();
+const formationSelect = document.getElementById('cmd-formation');
+const stanceSelect = document.getElementById('cmd-stance');
+const captureChoice = document.getElementById('capture-choice');
+let pendingCaptureSide = null;
 
 // handle สำหรับดีบัก/ทดสอบ
 window.__game = {
@@ -138,6 +147,41 @@ function pickCompany(px, py, radius = 34) {
   return best;
 }
 
+function pickSoldier(px, py) {
+  mouseNdc.set((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(mouseNdc, camera);
+  const meshes = [];
+  if (!battle) return null;
+  for (const c of battle.companies) for (const s of c.soldiers) if (s.alive && s.mesh.visible) meshes.push(s.mesh);
+  const hit = raycaster.intersectObjects(meshes, false)[0];
+  return hit ? hit.object.userData.soldier || null : null;
+}
+
+function inspectSoldier(s) {
+  inspectedSoldier = s;
+  unitViewButton.disabled = !s;
+  if (s?.company) battle.toggleSelect(s.company, false);
+  if (s) UI.toast(`เลือกทหาร ${UI.unitName(s)} — กด 👁 มุมทหารเพื่อมองผ่านสายตาเขา`);
+}
+
+function leaveUnitView() {
+  if (!unitViewSoldier) return;
+  unitViewSoldier = null;
+  controls.enabled = true;
+  unitViewButton.classList.remove('active');
+  unitViewButton.textContent = '👁 มุมทหาร';
+}
+
+function toggleUnitView() {
+  if (unitViewSoldier) { leaveUnitView(); return; }
+  if (!inspectedSoldier?.alive) return;
+  unitViewSoldier = inspectedSoldier;
+  controls.enabled = false;
+  camera.__focusTween = null;
+  unitViewButton.classList.add('active');
+  unitViewButton.textContent = '↩ ออกจากมุมทหาร';
+}
+
 function pickCompaniesInRect(x0, y0, x1, y1) {
   const minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
   const minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
@@ -157,12 +201,18 @@ function startBattle(rerollMission) {
   city.sides.forEach((s) => s.flagMat.color.set(0xb03030));
   openGateDoors(city.doorL, city.doorR, 0);
   battle = new Battle(mission, scene, city, onBattleEvent);
+  inspectedSoldier = null;
+  unitViewSoldier = null;
+  unitViewButton.disabled = true;
   speed = 1;
+  simAccumulator = 0;
   setSpeedUI();
   controls.autoRotate = false;
   document.getElementById('intro').classList.add('hidden');
   document.getElementById('end').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
+  captureChoice.classList.add('hidden');
+  pendingCaptureSide = null;
   focusWide();
   UI.toast('🎺 กองทัพตั้งรับคำสั่ง — ลากเมาส์ซ้ายเลือกกอง แล้วคลิกขวาสั่งโจมตี');
 }
@@ -171,10 +221,23 @@ function onBattleEvent(type, data) {
   switch (type) {
     case 'order_assault': UI.toast(`🎺 สั่ง ${data.n} กองโจมตีกำแพงด้าน${SIDE_NAMES[data.side]}!`); sfx.horn(); break;
     case 'order_fail': UI.toast('ไม่มีกองที่รับคำสั่งได้ (กองที่ปีนอยู่สั่งไม่ได้)', 'bad'); break;
+    case 'order_result': if (data.n < data.total) UI.toast(`รับคำสั่ง ${data.n}/${data.total} กอง — บางกองกำลังปีนหรือใช้เส้นทางนี้ไม่ได้`, 'bad'); break;
+    case 'retreat_order': UI.toast(data.n ? `↩ ถอนกำลัง ${data.n} กองกลับแนวตั้งต้น` : 'กองที่กำลังปีน/อยู่บนกำแพงถอยทางนี้ไม่ได้', data.n ? '' : 'bad'); break;
+    case 'hold_fire': UI.toast(data.enabled ? `🏹 นักธนู ${data.n} กองพักยิง` : `🏹 นักธนู ${data.n} กองกลับมายิง`, 'blue'); break;
     case 'inf_city_hint': UI.toast('🪜 ทหารราบเข้าเมืองทางบันไดใน — ตีกำแพงให้แตก แล้วพวกเขาจะลงไปเปิดประตูเอง'); break;
     case 'cav_wait_gate': UI.toast('🐴 กองม้ารอหน้าประตู — ต้องเปิดประตูก่อนจึงจะพุ่งเข้าเมืองได้'); break;
     case 'cav_enter': UI.toast('🐴 กองม้าพุ่งเข้าเมือง — ไล่ล่าทหารที่เหลือ!', 'blue'); break;
-    case 'captured': UI.toast(`🚩 ยึดกำแพงด้าน${SIDE_NAMES[data.side]}! ทหารลงบันไดในไปเปิดประตู`, 'big blue'); sfx.cheer(); break;
+    case 'captured':
+      UI.toast(`🚩 ยึดกำแพงด้าน${SIDE_NAMES[data.side]}! เลือกภารกิจต่อไป`, 'big blue');
+      pendingCaptureSide = data.side;
+      document.getElementById('capture-choice-title').textContent = `🚩 ยึดกำแพงด้าน${SIDE_NAMES[data.side]}แล้ว`;
+      captureChoice.classList.remove('hidden');
+      sfx.cheer();
+      break;
+    case 'capture_action':
+      if (pendingCaptureSide === data.side) { pendingCaptureSide = null; captureChoice.classList.add('hidden'); }
+      UI.toast({ hold: '🛡 สั่งรักษากำแพงที่ยึดได้', reinforce: '↔ สั่งเคลื่อนไปช่วยกำแพงด้านข้าง', descend: '⚔ สั่งลงเมืองกวาดล้าง' }[data.action], 'blue');
+      break;
     case 'ladder_broken': UI.toast(`🪜 บันไดด้าน${SIDE_NAMES[data.side]}ถูกหินกลิ้งใส่จนหัก!`, 'bad'); break;
     case 'support_march': UI.toast(`🧠 ผู้บัญชาการเมืองส่งพล ${data.n} นายจากด้าน${SIDE_NAMES[data.from]}ไปช่วยด้าน${SIDE_NAMES[data.to]}`); break;
     case 'sortie': UI.toast(`🐎 เมืองเปิดประตูส่งม้าซอง ${data.n} ตัวออกมาฟันนักธนู/รถทุบ! — ส่งหอกไปตัดตอน!`, 'bad'); sfx.hornLow(); break;
@@ -227,7 +290,13 @@ window.addEventListener('pointermove', (e) => {
       selBox.style.height = `${Math.abs(dy)}px`;
     }
   }
-  if (e.pointerType !== 'touch') mousePos = { x: e.clientX, y: e.clientY };
+  if (e.pointerType !== 'touch') {
+    mousePos = { x: e.clientX, y: e.clientY };
+    if (battle && battle.selection.size > 0 && !dragging && !rightDown) {
+      const p = groundPoint(e.clientX, e.clientY);
+      if (p) battle.setOrderPreview(p, classifyOrderPoint(p));
+    }
+  }
 });
 
 window.addEventListener('pointerup', (e) => {
@@ -246,8 +315,11 @@ window.addEventListener('pointerup', (e) => {
         battle.orderSelected(new THREE.Vector3(), { type: 'assault', side: wallSide });
       } else {
         // แตะบนกอง = เลือกเพิ่ม/ถอน · บนพื้น (มีกองที่เลือก) = สั่งทัพ
-        const c = pickCompany(e.clientX, e.clientY, 46);
-        if (c) {
+        const soldier = pickSoldier(e.clientX, e.clientY);
+        const c = soldier?.company || pickCompany(e.clientX, e.clientY, 46);
+        if (soldier) {
+          inspectSoldier(soldier);
+        } else if (c) {
           battle.toggleSelect(c, true);
         } else if (battle.selection.size > 0) {
           issueOrderAt(e.clientX, e.clientY);
@@ -270,8 +342,10 @@ window.addEventListener('pointerup', (e) => {
         if (picked.length) UI.toast(`เลือก ${battle.selection.size} กอง`);
       }
     } else if (battle) {
-      const c = pickCompany(e.clientX, e.clientY);
-      if (c) battle.toggleSelect(c, e.shiftKey);
+      const soldier = pickSoldier(e.clientX, e.clientY);
+      const c = soldier?.company || pickCompany(e.clientX, e.clientY);
+      if (soldier) inspectSoldier(soldier);
+      else if (c) battle.toggleSelect(c, e.shiftKey);
       else if (!e.shiftKey) battle.clearSelection();
     }
     selBox.style.display = 'none';
@@ -290,6 +364,14 @@ renderer.domElement.addEventListener('contextmenu', (e) => {
   issueOrderAt(e.clientX, e.clientY);
 });
 
+renderer.domElement.addEventListener('dblclick', (e) => {
+  if (!battle || battle.ended || e.button !== 0) return;
+  const c = pickCompany(e.clientX, e.clientY);
+  if (!c) return;
+  const n = battle.selectNearbySameType(c);
+  UI.toast(`เลือก ${n} กองชนิดเดียวกันที่อยู่ใกล้เคียง`);
+});
+
 // ชี้กองไหน — โชว์ในแถบล่าง (เมาส์เท่านั้น)
 let mousePos = { x: -1, y: -1 };
 
@@ -304,13 +386,30 @@ document.getElementById('btn-sound').onclick = () => {
   setMuted(!isMuted());
   document.getElementById('btn-sound').textContent = isMuted() ? '🔇' : '🔊';
 };
+unitViewButton.onclick = toggleUnitView;
+formationSelect.onchange = () => { if (battle) battle.commandFormation = formationSelect.value; };
+stanceSelect.onchange = () => { if (battle) battle.commandStance = stanceSelect.value; };
+document.getElementById('btn-retreat').onclick = () => battle?.retreatSelected();
+document.getElementById('btn-hold-fire').onclick = () => {
+  if (battle?.toggleHoldFireSelected() === null) UI.toast('เลือกกองธนูก่อนใช้คำสั่งพักยิง', 'bad');
+};
+document.getElementById('btn-focus-combat').onclick = () => {
+  const p = battle?.lastCombatPos;
+  if (!p) { UI.toast('ยังไม่มีจุดปะทะ', 'bad'); return; }
+  setFocus(p.clone().add(new THREE.Vector3(28, 30, 34)), p.clone().setY(p.y + 2));
+};
+document.querySelectorAll('[data-capture-action]').forEach((button) => {
+  button.onclick = () => {
+    if (battle && pendingCaptureSide !== null) battle.chooseCaptureAction(pendingCaptureSide, button.dataset.captureAction);
+  };
+});
 
 function setSpeedUI() {
-  document.querySelectorAll('.hud-speed .spd').forEach((b) => {
+  document.querySelectorAll('.hud-speed .spd[data-speed]').forEach((b) => {
     b.classList.toggle('active', +b.dataset.speed === speed);
   });
 }
-document.querySelectorAll('.hud-speed .spd').forEach((b) => {
+document.querySelectorAll('.hud-speed .spd[data-speed]').forEach((b) => {
   b.onclick = () => { speed = +b.dataset.speed; if (speed > 0) lastSpeed = speed; setSpeedUI(); };
 });
 
@@ -318,7 +417,10 @@ window.addEventListener('keydown', (e) => {
   if (!battle) return;
   if (e.key >= '1' && e.key <= '4') focusSide(+e.key - 1);
   else if (e.key === '0') focusWide();
-  else if (e.key === 'Escape') battle.clearSelection();
+  else if (e.key === 'Escape') {
+    if (unitViewSoldier) leaveUnitView();
+    else battle.clearSelection();
+  }
   else if (e.key === ' ') {
     e.preventDefault();
     if (speed > 0) { lastSpeed = speed; speed = 0; } else speed = lastSpeed || 1;
@@ -351,7 +453,28 @@ let drumT = 1.5;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, clock.getDelta());
 
-  if (battle && speed > 0) battle.update(dt * speed);
+  if (battle && speed > 0) {
+    simAccumulator += dt * speed;
+    // fixed timestep ทำให้ผล simulation คงที่แม้ refresh rate ต่างกัน
+    let steps = 0;
+    while (simAccumulator >= SIM_STEP && steps < 8) {
+      battle.update(SIM_STEP);
+      simAccumulator -= SIM_STEP;
+      steps++;
+    }
+  }
+
+  if (unitViewSoldier) {
+    if (!unitViewSoldier.alive) {
+      leaveUnitView();
+      UI.toast('ทหารที่ติดตามล้มแล้ว — กลับสู่กล้องแม่ทัพ', 'bad');
+    } else {
+      const s = unitViewSoldier;
+      const forward = new THREE.Vector3(Math.sin(s.yaw), 0, Math.cos(s.yaw));
+      camera.position.copy(s.pos).addScaledVector(forward, 0.22).setY(s.pos.y + (s.kind === 'cav' ? 2.45 : 1.45));
+      camera.lookAt(s.pos.x + forward.x * 14, camera.position.y - 0.05, s.pos.z + forward.z * 14);
+    }
+  }
 
   // กลองรบจังหวะสม่ำเสมอ
   if (battle && !battle.ended && speed > 0) {
@@ -380,8 +503,11 @@ renderer.setAnimationLoop(() => {
   }
 
   animateCityFlags(city.sides, dt);
-  updateCameraTween(camera, controls, dt);
+  if (!unitViewSoldier) updateCameraTween(camera, controls, dt);
+  const hiddenFollowMesh = unitViewSoldier?.mesh;
+  if (hiddenFollowMesh) hiddenFollowMesh.visible = false;
   renderer.render(scene, camera);
+  if (hiddenFollowMesh) hiddenFollowMesh.visible = true;
   if (shakeMag > 0.02) {
     camera.position.x -= sx; camera.position.y -= sy; camera.position.z -= sz;
   }

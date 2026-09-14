@@ -2,11 +2,14 @@ import * as THREE from 'three';
 import { makeSoldierMesh } from './models.js';
 
 const _v = new THREE.Vector3();
+let nextSoldierId = 1;
 
 export class Soldier {
-  constructor({ type, faction, side, kind = 'inf', utype = type, hp, speed, atkCd, dmg }) {
+  constructor({ type, faction, side, kind = 'inf', utype = type, hp, speed, atkCd, dmg, rng = () => 0.5 }) {
+    this.id = nextSoldierId++;
     this.mesh = makeSoldierMesh(type);
-    this.mesh.scale.setScalar(0.94 + Math.random() * 0.12);
+    this.mesh.userData.soldier = this;
+    this.mesh.scale.setScalar(0.94 + rng() * 0.12);
     this.faction = faction; // 'atk' | 'def'
     this.side = side;       // ด้านของผู้โจมตี (0-3), ฝ่ายเมือง = -1
     this.kind = kind;       // 'inf' | 'cav'
@@ -14,7 +17,7 @@ export class Soldier {
     this.hpMax = hp; this.hp = hp;
     this.speed = speed;
     this.atkCd = atkCd; this.dmg = dmg;
-    this.cd = Math.random() * atkCd;
+    this.cd = rng() * atkCd;
     this.state = 'idle';
     this.alive = true;
     this.zone = 'field';    // 'field' | 'wall' | 'city'
@@ -23,17 +26,23 @@ export class Soldier {
     this.stair = null;      // { dir: 'up'|'down', s } ตอนใช้บันไดใน
     this.pos = new THREE.Vector3();
     this.yaw = 0;
-    this.bob = Math.random() * 10;
+    this.bob = rng() * 10;
     this.moving = false;
     this.attackAnim = 0;
+    this.attackWindup = 0;
+    this.attackTarget = null;
+    this.hitAnim = 0;
+    this.hitDir = new THREE.Vector3();
     this.dieT = 0;
-    this.fallDir = Math.random() < 0.5 ? 1 : -1;
+    this.fallDir = rng() < 0.5 ? 1 : -1;
     this.homePost = null;
     this.orderTarget = null; // จุดหมายที่คุมทัพสั่ง (ใช้โดย combat loop เมื่อไม่มีศัตรู)
     this.waypoints = null;
     this.detached = false;
-    this.swayT = Math.random() * 10;
+    this.swayT = rng() * 10;
     this.counted = false;
+    this.intent = 'idle';
+    this.chargeReady = false;
   }
 
   damage(n) {
@@ -92,10 +101,21 @@ export class Soldier {
     const cav = this.kind === 'cav';
     const bobY = this.moving ? Math.abs(Math.sin(this.bob * (cav ? 6 : 9))) * (cav ? 0.12 : 0.06) : 0;
     let lungeX = 0, lungeZ = 0;
+    if (this.attackWindup > 0) {
+      const k = Math.min(1, this.attackWindup / 0.24) * (cav ? 0.18 : 0.1);
+      lungeX -= Math.sin(this.yaw) * k;
+      lungeZ -= Math.cos(this.yaw) * k;
+    }
     if (this.attackAnim > 0) {
       this.attackAnim -= dt;
-      const k = Math.sin((1 - Math.max(0, this.attackAnim) / 0.22) * Math.PI) * (cav ? 0.3 : 0.22);
-      lungeX = Math.sin(this.yaw) * k; lungeZ = Math.cos(this.yaw) * k;
+      const k = Math.sin((1 - Math.max(0, this.attackAnim) / 0.28) * Math.PI) * (cav ? 0.48 : 0.34);
+      lungeX += Math.sin(this.yaw) * k; lungeZ += Math.cos(this.yaw) * k;
+    }
+    if (this.hitAnim > 0) {
+      this.hitAnim = Math.max(0, this.hitAnim - dt);
+      const k = Math.sin((this.hitAnim / 0.16) * Math.PI) * 0.22;
+      lungeX += this.hitDir.x * k;
+      lungeZ += this.hitDir.z * k;
     }
     m.position.set(this.pos.x + lungeX, this.pos.y + bobY, this.pos.z + lungeZ);
     if (this.state === 'climb' || this.state === 'stairUp' || this.state === 'stairDown') {
