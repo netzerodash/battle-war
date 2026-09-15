@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { initScene, updateCameraTween } from './scene.js';
 import { buildCity, animateCityFlags, openGateDoors } from './city.js';
-import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, TEAM_COLORS, DIFFICULTIES, genMission } from './config.js';
+import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, TEAM_COLORS, DIFFICULTIES, SIDE_FEATURE_LABELS, genMission } from './config.js';
 import { Battle } from './battle.js';
 import { SIDE_VECS, classifyOrderPoint, sectionOf } from './world.js';
 import * as UI from './ui.js';
@@ -37,7 +37,31 @@ try {
 document.querySelectorAll('input[name="difficulty"]').forEach((input) => {
   input.addEventListener('change', () => { try { localStorage.setItem('siege.difficulty', input.value); } catch { /* ไม่จำก็ได้ */ } });
 });
-let mission = genMission(undefined, selectedDifficulty());
+
+// ยุทธปัจจัยที่เลือกไว้บนหน้าเริ่มเกม — เลือกได้สูงสุด 2 ใบ (จำไว้ข้ามรอบเล่น)
+const loadoutInputs = [...document.querySelectorAll('input[name="loadout"]')];
+const loadoutHint = document.getElementById('loadout-hint');
+function selectedLoadouts() {
+  return loadoutInputs.filter((i) => i.checked).map((i) => i.value);
+}
+function refreshLoadoutUI() {
+  const n = selectedLoadouts().length;
+  loadoutHint.textContent = `เลือกแล้ว ${n}/2`;
+  loadoutInputs.forEach((i) => { i.disabled = !i.checked && n >= 2; });
+}
+try {
+  const saved = JSON.parse(localStorage.getItem('siege.loadouts') || '[]');
+  loadoutInputs.forEach((i) => { if (saved.includes(i.value)) i.checked = true; });
+} catch { /* ไม่มีเลือกไว้ก็เริ่มจากว่าง */ }
+refreshLoadoutUI();
+loadoutInputs.forEach((input) => {
+  input.addEventListener('change', () => {
+    refreshLoadoutUI();
+    try { localStorage.setItem('siege.loadouts', JSON.stringify(selectedLoadouts())); } catch { /* ไม่จำก็ได้ */ }
+  });
+});
+
+let mission = genMission(undefined, selectedDifficulty(), selectedLoadouts());
 let battle = null;
 let speed = 1;
 let lastSpeed = 1;
@@ -63,7 +87,7 @@ window.__game = {
   focusSide,
   focusWide,
   focusPalace,
-  startWithSeed(seed, difficulty = selectedDifficulty()) { mission = genMission(seed, difficulty); startBattle(false); },
+  startWithSeed(seed, difficulty = selectedDifficulty()) { mission = genMission(seed, difficulty, selectedLoadouts()); startBattle(false); },
 };
 
 const raycaster = new THREE.Raycaster();
@@ -264,8 +288,10 @@ function pickCompaniesInRect(x0, y0, x1, y1) {
 // ---------- โฟลว์เกม ----------
 function startBattle(rerollMission) {
   if (battle) { scene.remove(battle.group); battle = null; }
-  if (rerollMission) mission = genMission(undefined, selectedDifficulty());
-  else if (mission.difficulty !== selectedDifficulty()) mission = genMission(mission.seed, selectedDifficulty());
+  const wantLoadouts = selectedLoadouts();
+  const loadoutsChanged = JSON.stringify([...(mission.loadouts || [])].sort()) !== JSON.stringify([...wantLoadouts].sort());
+  if (rerollMission) mission = genMission(undefined, selectedDifficulty(), wantLoadouts);
+  else if (mission.difficulty !== selectedDifficulty() || loadoutsChanged) mission = genMission(mission.seed, selectedDifficulty(), wantLoadouts);
   city.sides.forEach((s) => s.flagMat.color.set(TEAM_COLORS.city));
   city.palaceFlag.flagMat.color.set(TEAM_COLORS.city);
   for (const g of city.gates) openGateDoors(g.doorL, g.doorR, 0);
@@ -273,6 +299,7 @@ function startBattle(rerollMission) {
   // Keep a new battle in sync with the tactical controls the player can already see.
   battle.commandFormation = formationSelect.value;
   battle.commandStance = stanceSelect.value;
+  setupAbilityBar();
   inspectedSoldier = null;
   unitViewSoldier = null;
   unitViewButton.disabled = true;
@@ -291,6 +318,12 @@ function startBattle(rerollMission) {
   pendingCaptureSide = null;
   focusWide();
   UI.toast('🎺 เป้าหมาย: ฝ่ากำแพงสามชั้นเข้าไปยึดลานวังต้องห้าม — ลากซ้ายเลือกกอง คลิกขวาสั่งทัพ');
+  // เมืองสุ่มตาม seed: สรุปด้านที่มีลักษณะพิเศษให้เห็นก่อนวางแผน (ปกติทุกด้าน = ไม่ต้องบอก)
+  const notable = mission.sides.map((s, i) => [i, s.feature]).filter(([, f]) => f !== 'normal');
+  if (notable.length) {
+    const summary = notable.map(([i, f]) => `${SIDE_NAMES[i]} ${SIDE_FEATURE_LABELS[f]}`).join(' · ');
+    setTimeout(() => UI.toast(`🏯 เมืองศึกนี้: ${summary}`, 'blue'), 1600);
+  }
   // คำแนะนำครั้งแรก: บอกว่ารายละเอียดย้ายไปอยู่ที่ไหน (แทนคำใบ้ถาวรบนจอ)
   let hintSeen = false;
   try { hintSeen = localStorage.getItem('siege.hudHintSeen') === '1'; localStorage.setItem('siege.hudHintSeen', '1'); } catch { /* ไม่มี storage ก็แสดงทุกครั้ง */ }
@@ -342,6 +375,10 @@ function onBattleEvent(type, data) {
     case 'ability_horn': UI.toast(`📯 แตรรวมพล! กองที่เลือก ${data.n} นาย เดินเร็วขึ้น/ตีถี่ขึ้น 10 วิ`, 'good'); sfx.horn(); break;
     case 'ability_reinforce': UI.toast(`🐎 กองหนุนมาถึงแล้ว! ${data.companies} กอง (${data.n} นาย) เข้าเมืองทันที — เหลือสิทธิ์เรียกอีก ${data.chargesLeft} ครั้ง`, 'big blue'); sfx.cheer(); break;
     case 'reinforce_charge_earned': UI.toast(`🐎 ได้สิทธิ์เรียกกองหนุนแล้ว (${data.total}) — กด X เพื่อเรียก`, 'good'); break;
+    case 'ability_fire_volley': UI.toast(`🔥 ห่าธนูไฟถล่มด้าน${SIDE_NAMES[data.side]}! ฝ่ายเมืองยิงธนู/กลิ้งหินไม่ได้ 8 วิ`, 'big blue'); sfx.hornLow(); break;
+    case 'ability_spy': UI.toast(`🕵️ ไส้ศึกแงะ${GATE_NAMES[data.ring]}สำเร็จ! ความแข็งแรงหายไปครึ่งหนึ่งทันที`, 'big blue'); sfx.cheer(); break;
+    case 'ability_sapper_start': UI.toast(`⛏️ กองขุดอุโมงค์เริ่มขุดใต้กำแพงด้าน${SIDE_NAMES[data.side]} — จะถล่มใน ${data.t} วิ`, 'blue'); break;
+    case 'ability_sapper_collapse': UI.toast(`⛏️ อุโมงค์ระเบิด! กำแพงด้าน${SIDE_NAMES[data.side]}ถล่ม ทหารเมือง ${data.n} นายล้ม`, 'big blue'); sfx.thud(); break;
     case 'end': UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
   }
 }
@@ -509,6 +546,45 @@ abilityReinforceBtn.onclick = () => {
   if (!battle) return;
   if (!battle.useReinforcementWave()) UI.toast('🐎 ยังไม่มีสิทธิ์เรียกกองหนุน — ยึดกำแพงนอกได้ 1 ด้านก่อน', 'bad');
 };
+
+// ยุทธปัจจัยที่เลือกได้ก่อนศึก 3 ใบที่ต้องกดใช้ (ใบที่ 4 คือรถทุบหุ้มเหล็กเป็นพาสซีฟ ไม่ต้องกด)
+// เรียงตามลำดับความสำคัญคงที่ — ถ้าเลือกมาก็จับคู่กับปุ่ม C แล้ว V ตามลำดับนี้เสมอ ไม่ว่าจะติ๊กก่อน/หลังบนหน้าเริ่มเกม
+const LOADOUT_ACTIVE_ORDER = ['fireVolley', 'spySabotage', 'sapperTunnel'];
+const LOADOUT_METHOD = {
+  fireVolley: 'useFireVolley', spySabotage: 'useSpySabotage', sapperTunnel: 'useSapperTunnel',
+};
+const LOADOUT_FAIL_MSG = {
+  fireVolley: () => (battle.abilities.fireVolleyCd > 0 ? `🔥 ห่าธนูไฟยังไม่พร้อม อีก ${Math.ceil(battle.abilities.fireVolleyCd)} วิ` : '🔥 เลือกกองที่กำลังบุกด้านไหนก่อนถึงจะสั่งยิงได้'),
+  spySabotage: () => '🕵️ ใช้ไส้ศึกไปแล้ว หรือไม่มีประตูชั้นในให้แงะ',
+  sapperTunnel: () => '⛏️ ใช้กองขุดอุโมงค์ไปแล้ว หรือยังไม่ได้เลือกกองที่กำลังบุกด้านไหน',
+};
+const loadoutSlotEls = Object.fromEntries(LOADOUT_ACTIVE_ORDER.map((k) => [k, document.getElementById(`ability-${k}`)]));
+const armoredRamEl = document.getElementById('ability-armoredRam');
+let activeLoadoutSlots = []; // [{ key, code, el }] — เติมใน setupAbilityBar() ทุกครั้งที่เริ่มศึกใหม่
+
+for (const key of LOADOUT_ACTIVE_ORDER) {
+  loadoutSlotEls[key].onclick = () => {
+    if (!battle) return;
+    if (!battle[LOADOUT_METHOD[key]]()) UI.toast(LOADOUT_FAIL_MSG[key](), 'bad');
+  };
+}
+
+// เรียกทุกครั้งที่เริ่มศึกใหม่ — โชว์เฉพาะยุทธปัจจัยที่เลือกไว้จริงในศึกนี้ (0-2 ใบที่ต้องกดใช้ + พาสซีฟถ้ามี)
+function setupAbilityBar() {
+  activeLoadoutSlots = [];
+  const codes = ['KeyC', 'KeyV'];
+  const letters = ['C', 'V'];
+  for (const key of LOADOUT_ACTIVE_ORDER) {
+    const el = loadoutSlotEls[key];
+    if (!battle.loadouts.has(key)) { el.classList.add('hidden'); continue; }
+    const i = activeLoadoutSlots.length;
+    el.classList.remove('hidden');
+    el.querySelector('kbd').textContent = letters[i];
+    activeLoadoutSlots.push({ key, code: codes[i], el });
+  }
+  armoredRamEl.classList.toggle('hidden', !battle.loadouts.has('armoredRam'));
+}
+
 function updateAbilityBar() {
   if (!battle) return;
   const H = CFG.commander.horn;
@@ -522,6 +598,30 @@ function updateAbilityBar() {
   abilityReinforceBtn.classList.toggle('no-charge', charges === 0);
   abilityReinforceBtn.disabled = charges === 0;
   abilityReinforceBtn.querySelector('.charge-num').textContent = String(charges);
+
+  if (activeLoadoutSlots.some((s) => s.key === 'fireVolley')) {
+    const F = CFG.loadouts.fireVolley;
+    const fcd = battle.abilities.fireVolleyCd;
+    const el = loadoutSlotEls.fireVolley;
+    el.classList.toggle('cooling', fcd > 0);
+    el.disabled = fcd > 0 || battle.selection.size === 0;
+    el.querySelector('.cd-num').textContent = fcd > 0 ? Math.ceil(fcd) : '';
+    el.querySelector('.cd-ring circle').style.strokeDashoffset = String(100.5 * (1 - fcd / F.cooldown));
+  }
+  if (activeLoadoutSlots.some((s) => s.key === 'spySabotage')) {
+    const used = battle.abilities.spySabotageUsed;
+    const el = loadoutSlotEls.spySabotage;
+    el.classList.toggle('no-charge', used);
+    el.disabled = used;
+    el.querySelector('.charge-num').textContent = used ? '0' : '1';
+  }
+  if (activeLoadoutSlots.some((s) => s.key === 'sapperTunnel')) {
+    const used = battle.abilities.sapperUsed;
+    const el = loadoutSlotEls.sapperTunnel;
+    el.classList.toggle('no-charge', used);
+    el.disabled = used || battle.sapper.active;
+    el.querySelector('.charge-num').textContent = battle.sapper.active ? String(Math.ceil(battle.sapper.t)) : used ? '0' : '1';
+  }
 }
 
 function setSpeedUI() {
@@ -575,6 +675,11 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyX' && !e.ctrlKey && !e.metaKey) {
     if (!battle.useReinforcementWave()) UI.toast('🐎 ยังไม่มีสิทธิ์เรียกกองหนุน — ยึดกำแพงนอกได้ 1 ด้านก่อน', 'bad');
+    return;
+  }
+  if ((e.code === 'KeyC' || e.code === 'KeyV') && !e.ctrlKey && !e.metaKey) {
+    const slot = activeLoadoutSlots.find((s) => s.code === e.code);
+    if (slot && !battle[LOADOUT_METHOD[slot.key]]()) UI.toast(LOADOUT_FAIL_MSG[slot.key](), 'bad');
     return;
   }
   if (e.key === '0') focusWide();

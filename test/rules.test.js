@@ -8,7 +8,7 @@ import {
   gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS,
   constrainToRegion, regionOf, classifyOrderPoint, gateFrontPoint, gateInsidePoint, RINGS,
 } from '../src/world.js';
-import { CFG, mulberry32, applyDifficulty, genMission, DIFFICULTIES } from '../src/config.js';
+import { CFG, mulberry32, applyDifficulty, genMission, DIFFICULTIES, CITY_VARIATION } from '../src/config.js';
 import { Battle, orderVisual, cityRallyPoint } from '../src/battle.js';
 import { buildCity, gateDoorAngle } from '../src/city.js';
 import { assaultRoute } from '../src/navigation.js';
@@ -373,9 +373,10 @@ test('a unit squeezed by a dense crowd edges forward instead of freezing solid f
     kind: 'inf', pos: new THREE.Vector3((i % 2 ? 1 : -1) * 0.05, 0, 0.15 + i * 0.02),
   }));
   const battle = {
-    _nearby: [],
+    _nearby: [], moatSide: -1,
     movementGrid: { query: (pos, radius, out) => { out.length = 0; out.push(...packed); return out; } },
     nearGateOrStair: () => false,
+    moatFactor: Battle.prototype.moatFactor,
   };
   const start = s.pos.clone();
   for (let i = 0; i < 40; i++) Battle.prototype.stepGroundUnit.call(battle, s, 1 / 30, target, 3, 0.35);
@@ -824,6 +825,82 @@ test('a reinforcement wave only arrives once a wall side has actually been captu
   assert.equal(Battle.prototype.useReinforcementWave.call(battle), false, 'no second wave without a second captured wall');
 });
 
+test('armored ram only strengthens the ram once armoredRam is actually chosen, and never stacks across battles', () => {
+  CFG.unit.ram.batterRate = 0.016; // ค่าฐานระดับปกติ ก่อน applyDifficulty เคยตั้งไว้
+  const withRam = { loadouts: new Set(['armoredRam']) };
+  Battle.prototype.applyLoadoutRamStats.call(withRam);
+  assert.equal(CFG.unit.ram.ramHp, Math.round(240 * CFG.loadouts.armoredRam.ramHpMul));
+  assert.ok(Math.abs(CFG.unit.ram.batterRate - 0.016 * CFG.loadouts.armoredRam.ramRateMul) < 1e-9, 'the batter rate must also scale up while the loadout is active');
+  // ศึกถัดไปไม่ได้เลือกไว้ — ต้องกลับมาเป็นค่าฐานพอดี ไม่ใช่ค่าฐาน × ตัวคูณซ้ำ (batterRate เป็นหน้าที่ของ applyDifficulty รีเซ็ตเอง ไม่ต้องรีเซ็ตในนี้)
+  const withoutRam = { loadouts: new Set() };
+  Battle.prototype.applyLoadoutRamStats.call(withoutRam);
+  assert.equal(CFG.unit.ram.ramHp, 240);
+});
+
+test('fire volley silences a wall side’s archers and rock roller for its duration, then respects its cooldown', () => {
+  const events = [];
+  const roller = { phase: 'telegraph', visual: { visible: true }, timer: 5 };
+  const battle = {
+    loadouts: new Set(['fireVolley']), abilities: { fireVolleyCd: 0 },
+    selection: new Set([{ side: 1 }, { side: 1 }, { side: 3 }]),
+    defenses: [{ suppressedT: 0 }, { suppressedT: 0, roller }, { suppressedT: 0 }, { suppressedT: 0 }],
+    majoritySelectedSide: Battle.prototype.majoritySelectedSide,
+    onEvent: (t, d) => events.push([t, d]),
+  };
+  assert.equal(Battle.prototype.useFireVolley.call(battle), true);
+  assert.equal(battle.defenses[1].suppressedT, CFG.loadouts.fireVolley.duration, 'the side with more selected companies (1, not 3) should be the target');
+  assert.equal(roller.visual.visible, false, 'an in-flight rock telegraph should be cancelled, not left frozen mid-air');
+  assert.equal(battle.abilities.fireVolleyCd, CFG.loadouts.fireVolley.cooldown);
+  assert.equal(Battle.prototype.useFireVolley.call(battle), false, 'cannot fire again during its own cooldown');
+  assert.deepEqual(events[0], ['ability_fire_volley', { side: 1 }]);
+
+  const noLoadout = { loadouts: new Set(), abilities: { fireVolleyCd: 0 }, selection: new Set([{ side: 0 }]), defenses: [{}], onEvent() {} };
+  assert.equal(Battle.prototype.useFireVolley.call(noLoadout), false, 'unavailable when this loadout card was not chosen');
+});
+
+test('spy sabotage halves the most-pressured closed inner gate, once per battle', () => {
+  const events = [];
+  const gateA = { ring: 1, open: false, started: false, hp: 100, hpMax: 200 };
+  const gateB = { ring: 2, open: false, started: true, hp: 150, hpMax: 200 }; // ถูกฟันอยู่แล้ว — ควรเป็นเป้า
+  const battle = {
+    loadouts: new Set(['spySabotage']), abilities: { spySabotageUsed: false },
+    innerGates: [gateA, gateB], onEvent: (t, d) => events.push([t, d]),
+  };
+  assert.equal(Battle.prototype.useSpySabotage.call(battle), true);
+  assert.equal(gateB.hp, 75, 'the gate already being hacked should be sabotaged, not the untouched one');
+  assert.equal(gateA.hp, 100, 'an unrelated gate must be left alone');
+  assert.equal(battle.abilities.spySabotageUsed, true);
+  assert.equal(Battle.prototype.useSpySabotage.call(battle), false, 'a spy can only sabotage once per battle');
+  assert.deepEqual(events[0], ['ability_spy', { ring: 2 }]);
+});
+
+test('sapper tunnel channels for its full duration before collapsing the chosen wall side', () => {
+  const events = [];
+  const melee = Array.from({ length: 20 }, () => ({ alive: true, die() { this.alive = false; } }));
+  const battle = {
+    loadouts: new Set(['sapperTunnel']), abilities: { sapperUsed: false },
+    selection: new Set([{ side: 3 }]), sapper: { active: false, side: null, t: 0 },
+    defenses: [{}, {}, {}, { melee }],
+    majoritySelectedSide: Battle.prototype.majoritySelectedSide,
+    shake: 0, spawnSpark() {}, onEvent: (t, d) => events.push([t, d]),
+  };
+  assert.equal(Battle.prototype.useSapperTunnel.call(battle), true);
+  assert.equal(battle.sapper.active, true);
+  assert.equal(battle.sapper.side, 3);
+  assert.equal(Battle.prototype.useSapperTunnel.call(battle), false, 'only one tunnel per battle, and not while one is already channelling');
+
+  const half = CFG.loadouts.sapperTunnel.channelTime / 2;
+  Battle.prototype.updateSapper.call(battle, half);
+  assert.equal(battle.sapper.active, true, 'must not collapse early');
+  assert.equal(melee.filter((s) => s.alive).length, 20);
+
+  Battle.prototype.updateSapper.call(battle, half + 0.01);
+  assert.equal(battle.sapper.active, false);
+  const survivors = melee.filter((s) => s.alive).length;
+  assert.equal(survivors, 20 - Math.round(20 * CFG.loadouts.sapperTunnel.casualtyFrac), 'roughly casualtyFrac of that side’s wall melee should fall when the tunnel collapses');
+  assert.equal(events.at(-1)[0], 'ability_sapper_collapse');
+});
+
 test('routes into the palace pass every gate in order and stop at the first closed one', () => {
   const from = cityRallyPoint();
   const target = new THREE.Vector3(0, 0, -4);
@@ -1125,4 +1202,39 @@ test('missions remember their difficulty and scale wall garrisons with it', () =
   assert.ok(genMission(5, 'easy').sides[0].melee < genMission(5, 'normal').sides[0].melee);
   assert.deepEqual(Object.keys(DIFFICULTIES), ['easy', 'normal', 'hard']);
   applyDifficulty('normal');
+});
+
+test('the same seed always produces the same city, and different seeds produce visibly different ones', () => {
+  const a = genMission(777, 'normal');
+  const b = genMission(777, 'normal');
+  assert.deepEqual(a.sides.map((s) => s.feature), b.sides.map((s) => s.feature), 'a replayed seed must be the exact same city, not just the same troop totals');
+  const features = new Set();
+  for (let seed = 1; seed <= 40; seed++) for (const s of genMission(seed, 'normal').sides) features.add(s.feature);
+  assert.ok(features.size >= 3, 'across many seeds we should actually see more than one city layout, not always "normal"');
+});
+
+test('a wall side’s feature changes its garrison the way its name promises, and the south gate side never floods', () => {
+  for (let seed = 1; seed <= 60; seed++) {
+    const m = genMission(seed, 'normal');
+    // ทุกด้านคูณจากตัวคูณระดับความยากเดียวกัน — เทียบกับด้าน "ปกติ" ของ seed เดียวกันจึงชี้จุดผิดได้ตรง ๆ
+    const normalMelee = m.sides.find((s) => s.feature === 'normal')?.melee;
+    m.sides.forEach((s, i) => {
+      if (s.feature === 'weak' && normalMelee) assert.ok(s.melee < normalMelee, `seed ${seed} side ${i}: a cracked wall should have fewer defenders than a normal one`);
+      if (s.feature === 'reinforced') assert.ok(s.archers > CFG.wallArchers, `seed ${seed} side ${i}: reinforced towers should add archers`);
+      if (i === 2) assert.notEqual(s.feature, 'moat', 'the south side already has the gate and ram approach — it must never roll a moat');
+    });
+  }
+});
+
+test('the moat slows an attacker approaching its own wall side, and never touches battles without one', () => {
+  const noMoat = { moatSide: -1 };
+  assert.equal(Battle.prototype.moatFactor.call(noMoat, new THREE.Vector3(0, 0, CFG.wallHalf + CFG.wallThick + 2)), 1);
+
+  const withMoat = { moatSide: 2 }; // ใต้ (สมมติทดสอบ แม้ genMission จริงจะไม่สุ่มคูเมืองด้านนี้)
+  const inBand = new THREE.Vector3(0, 0, CFG.wallHalf + CFG.wallThick + 2); // หน้ากำแพงด้านใต้ ในแถบคูเมือง
+  assert.equal(Battle.prototype.moatFactor.call(withMoat, inBand), CITY_VARIATION.moatSlowFactor);
+  const otherSide = new THREE.Vector3(CFG.wallHalf + CFG.wallThick + 2, 0, 0); // ด้านตะวันออก ไม่ใช่ด้านที่มีคู
+  assert.equal(Battle.prototype.moatFactor.call(withMoat, otherSide), 1);
+  const farField = new THREE.Vector3(0, 0, CFG.wallHalf + CFG.wallThick + CITY_VARIATION.moatDepth + 20); // พ้นแถบคูไปแล้ว
+  assert.equal(Battle.prototype.moatFactor.call(withMoat, farField), 1);
 });

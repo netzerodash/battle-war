@@ -1,4 +1,4 @@
-import { CFG, SIDE_NAMES, GATE_NAMES, DIFFICULTIES } from './config.js';
+import { CFG, SIDE_NAMES, GATE_NAMES, DIFFICULTIES, SIDE_FEATURE_LABELS } from './config.js';
 import { ORDER_LABELS, PHASE_LABELS } from './orders.js';
 import { sectionOf, distOutOf, gateFrontPoint } from './world.js';
 
@@ -141,7 +141,9 @@ export function mapTip(battle, x, z) {
     const side = sectionOf({ x, z });
     const info = battle.sideInfo(side);
     const cap = info.captured ? 'ยึดแล้ว' : `ป้องกัน${info.capProgress > 0 ? ` · กำลังยึด ${Math.round(info.capProgress * 100)}%` : ''}`;
-    return `กำแพงด้าน${SIDE_NAMES[side]} — ${cap}\nทหารเมืองบนกำแพง ${info.defendersWall} · หิน ${info.pile}/${info.stock}\nเราบนกำแพง ${info.onWall}${info.descending ? ` · ลงบันได ${info.descending}` : ''}${info.reinforceMen ? ` · เมืองกำลังเสริม ${info.reinforceMen}` : ''}`;
+    const feature = battle.mission?.sides?.[side]?.feature;
+    const featureLine = feature && feature !== 'normal' ? `\n${SIDE_FEATURE_LABELS[feature]}` : '';
+    return `กำแพงด้าน${SIDE_NAMES[side]} — ${cap}${featureLine}\nทหารเมืองบนกำแพง ${info.defendersWall} · หิน ${info.pile}/${info.stock}\nเราบนกำแพง ${info.onWall}${info.descending ? ` · ลงบันได ${info.descending}` : ''}${info.reinforceMen ? ` · เมืองกำลังเสริม ${info.reinforceMen}` : ''}`;
   }
   return '';
 }

@@ -20,6 +20,9 @@ const COLORS = {
   field: '#3d4a2e', city: '#4a4a3c', stone: '#8a8272', vermilion: '#9b3326', paving: '#b9b2a2',
   captured: ATTACKER, gateClosed: '#6b4a2a', gateOpen: '#e7d28a', selected: '#ffe27a', view: 'rgba(255,255,255,.75)',
 };
+// เมืองสุ่ม: สีจุดกำกับลักษณะแต่ละด้าน (ตรงกับ SIDE_FEATURE_LABELS ใน config.js)
+const FEATURE_DOT_COLOR = { weak: '#d2604f', reinforced: '#e8c14a', moat: '#4a8fd8' };
+const SIDE_MID = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // ทิศตั้งฉากออกจากกึ่งกลางแต่ละด้าน (เหนือ/ตะวันออก/ใต้/ตะวันตก)
 
 export class Minimap {
   constructor(canvas, { onPick, tipFor, tipEl }) {
@@ -114,6 +117,16 @@ export class Minimap {
       const info = battle.sideInfo(side);
       this.sideLine(side, 1, info.captured ? COLORS.captured : COLORS.stone, wallW);
       if (!info.captured && info.capProgress > 0) this.sideLine(side, info.capProgress, COLORS.captured, wallW * 0.55);
+      // เมืองสุ่ม: จุดสีกำกับด้านที่มีลักษณะพิเศษ (ปกติไม่วาด) — ดูรายละเอียดได้จาก tooltip เมื่อชี้ที่กำแพงด้านนั้น
+      const feature = battle.mission?.sides?.[side]?.feature;
+      const dotColor = FEATURE_DOT_COLOR[feature];
+      if (dotColor) {
+        const c = R[0].half + R[0].thick + 6;
+        const [dx, dz] = SIDE_MID[side];
+        const [px, py] = worldToMinimap(dx * c, dz * c, size);
+        ctx.fillStyle = dotColor;
+        ctx.beginPath(); ctx.arc(px, py, Math.max(2, 3 * k), 0, Math.PI * 2); ctx.fill();
+      }
     }
     for (let ring = 1; ring < R.length; ring++) {
       this.square(R[ring].half + R[ring].thick / 2, null, COLORS.vermilion, Math.max(1.5, R[ring].thick * k));

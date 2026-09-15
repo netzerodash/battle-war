@@ -55,6 +55,31 @@
       </div>
       <p class="tut-hint">มุมขวาล่างของจอระหว่างเล่นมีปุ่มให้กดตรง ๆ เหมือนกัน</p>
 
+      <div class="tut-section-label">ยุทธปัจจัย — เลือก 2 ใบ</div>
+      <fieldset class="loadouts" aria-label="ยุทธปัจจัย เลือก 2 ใบ">
+        <label class="loadout-card" for="loadout-fireVolley">
+          <input type="checkbox" name="loadout" value="fireVolley" id="loadout-fireVolley">
+          <span class="lo-ic">🔥</span><b>ห่าธนูไฟ</b>
+          <small>กดใช้ระหว่างศึก — เลือกกองที่กำลังบุกด้านไหน ฝ่ายเมืองด้านนั้นยิงธนู/กลิ้งหินไม่ได้ 8 วิ · คูลดาวน์ 45 วิ</small>
+        </label>
+        <label class="loadout-card" for="loadout-spySabotage">
+          <input type="checkbox" name="loadout" value="spySabotage" id="loadout-spySabotage">
+          <span class="lo-ic">🕵️</span><b>ไส้ศึก</b>
+          <small>ใช้ได้ครั้งเดียว — ประตูชั้นในที่ใกล้แตกที่สุดเสียความแข็งแรงทันทีครึ่งหนึ่ง เลือกจังหวะใช้ให้ดี</small>
+        </label>
+        <label class="loadout-card" for="loadout-sapperTunnel">
+          <input type="checkbox" name="loadout" value="sapperTunnel" id="loadout-sapperTunnel">
+          <span class="lo-ic">⛏️</span><b>กองขุดอุโมงค์</b>
+          <small>ใช้ได้ครั้งเดียว — เลือกกองที่กำลังบุกด้านไหน ขุด 40 วิแล้วกำแพงด้านนั้นถล่ม</small>
+        </label>
+        <label class="loadout-card" for="loadout-armoredRam">
+          <input type="checkbox" name="loadout" value="armoredRam" id="loadout-armoredRam">
+          <span class="lo-ic">🛡️</span><b>รถทุบหุ้มเหล็ก</b>
+          <small>ติดตัวตลอดศึก ไม่ต้องกดใช้ — รถทุบทนขึ้น 60% และทุบประตูเร็วขึ้น 25%</small>
+        </label>
+      </fieldset>
+      <p class="tut-hint" id="loadout-hint">เลือกแล้ว 0/2</p>
+
       <div class="tut-section-label">ระดับความยาก</div>
       <fieldset class="difficulty" aria-label="ระดับความยาก">
         <label for="diff-easy"><input type="radio" name="difficulty" value="easy" id="diff-easy"><span class="diff-ic">🌱</span><span class="diff-text"><b>ง่าย</b><small>เมืองเปราะกว่า · 18 นาที</small></span></label>
@@ -108,6 +133,23 @@
         <kbd>X</kbd><span class="ic">🐎</span><span class="nm">กองหนุน</span>
         <b class="charge-num">0</b>
       </button>
+      <!-- 3 ช่องนี้เป็นยุทธปัจจัยที่เลือกได้ก่อนศึก — ซ่อนไว้ก่อน main.js โชว์เฉพาะ 1-2 ใบที่เลือกจริง แล้วผูกปุ่ม C/V ให้เอง -->
+      <button id="ability-fireVolley" class="ability-slot hidden" title="🔥 ห่าธนูไฟ — เลือกกองที่กำลังบุกด้านไหน ฝ่ายเมืองด้านนั้นยิงธนู/กลิ้งหินไม่ได้ 8 วิ · คูลดาวน์ 45 วิ">
+        <kbd></kbd><span class="ic">🔥</span><span class="nm">ห่าธนูไฟ</span>
+        <svg class="cd-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16"></circle></svg>
+        <b class="cd-num"></b>
+      </button>
+      <button id="ability-spySabotage" class="ability-slot hidden" title="🕵️ ไส้ศึก — ใช้ได้ครั้งเดียว: ประตูชั้นในที่ใกล้แตกที่สุดเสียความแข็งแรงทันทีครึ่งหนึ่ง">
+        <kbd></kbd><span class="ic">🕵️</span><span class="nm">ไส้ศึก</span>
+        <b class="charge-num">1</b>
+      </button>
+      <button id="ability-sapperTunnel" class="ability-slot hidden" title="⛏️ กองขุดอุโมงค์ — ใช้ได้ครั้งเดียว: เลือกกองที่กำลังบุกด้านไหน ขุด 40 วิแล้วกำแพงด้านนั้นถล่ม">
+        <kbd></kbd><span class="ic">⛏️</span><span class="nm">อุโมงค์</span>
+        <b class="charge-num">1</b>
+      </button>
+      <div id="ability-armoredRam" class="ability-slot passive hidden" title="🛡️ รถทุบหุ้มเหล็ก — ติดตัวตลอดศึก: รถทุบทนขึ้น 60% และทุบประตูเร็วขึ้น 25%">
+        <span class="ic">🛡️</span><span class="nm">รถทุบเหล็ก</span>
+      </div>
     </div>
 
     <div id="cmd-bar" class="cmd-bar hidden">
@@ -225,6 +267,7 @@
         <div class="ctl"><kbd>.</kbd><span>กองที่ว่างงาน</span></div>
         <div class="ctl"><kbd>Z</kbd><span>📯 แตรรวมพล</span></div>
         <div class="ctl"><kbd>X</kbd><span>🐎 เรียกกองหนุน</span></div>
+        <div class="ctl"><kbd>C · V</kbd><span>ยุทธปัจจัยที่เลือกไว้ก่อนศึก (ถ้ามี)</span></div>
         <div class="ctl"><kbd>F1–F4 / F5</kbd><span>มุมด้าน / ลานวัง</span></div>
         <div class="ctl"><kbd>0 · Space</kbd><span>มุมกว้าง · หยุด/เล่น</span></div>
         <div class="ctl"><kbd>H · Esc</kbd><span>ซ่อน HUD · ยกเลิกเลือก</span></div>

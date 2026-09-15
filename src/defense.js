@@ -37,6 +37,7 @@ export class DefenseSide {
     this.detachedTo = null;
     this.detachCd = 0;
     this.brainT = battle.rng() * 0.5;
+    this.suppressedT = 0; // 🔥 ห่าธนูไฟ: ระหว่างนี้หยุดยิงธนู/กลิ้งหิน (กองหิน/ผู้บัญชาการยังทำงานปกติ)
 
     // โลจิสติกส์หิน: กองบนกำแพง (roller ใช้จากนี้) + คลังในเมือง (พลขนหินแบกขึ้นมา)
     this.rock = { pile: CFG.rockLogi.pileStart, stock: CFG.rockLogi.stock };
@@ -357,8 +358,8 @@ export class DefenseSide {
   }
 
   update(dt) {
-    this.updateRoller(dt);
-    this.updateArchers(dt);
+    if (this.suppressedT > 0) this.suppressedT = Math.max(0, this.suppressedT - dt);
+    else { this.updateRoller(dt); this.updateArchers(dt); }
     this.updateCarriers(dt);
     this.updateBrain(dt);
   }

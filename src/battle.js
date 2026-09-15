@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CFG, mulberry32, TEAM_COLORS, applyDifficulty } from './config.js';
+import { CFG, mulberry32, TEAM_COLORS, applyDifficulty, CITY_VARIATION } from './config.js';
 import {
   SIDE_VECS, worldPoint, sectionOf, clampOnWall, sectionCenter, nearestSide, clamp,
   stairPoints, gateInsidePoint, clampFieldPoint, wallRoute, constrainFieldOutsideWall,
@@ -102,6 +102,8 @@ const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
 // สถานะที่กองร้อยกำลังพาทหารเดินตามคำสั่งอยู่ — melee loop ต้องไม่ลากทหารแย่งกับกอง
 const COMPANY_MOVE_STATES = new Set(['march', 'ride', 'cityMarch', 'escalade']);
+// พลังชีวิตรถทุบตั้งต้น (ต้องตรงกับ CFG.unit.ram.ramHp ก่อนยุทธปัจจัย 🛡️ มีผล) — 🛡️ รถทุบหุ้มเหล็กคูณจากค่านี้เสมอ
+const RAM_HP_BASE = 240;
 // ธงลานวัง: สีเมือง → สีทัพเราตามความคืบหน้าการยึด
 const PALACE_CITY = new THREE.Color(TEAM_COLORS.city);
 const PALACE_TAKEN = new THREE.Color(TEAM_COLORS.attacker);
@@ -205,6 +207,9 @@ export class Battle {
     this.mission = mission;
     // ระดับความยากต้องมีผลก่อนสร้างทหารทุกนาย (จำนวน พลังชีวิต ประตู เวลาเกม)
     this.difficulty = applyDifficulty(mission.difficulty);
+    // ยุทธปัจจัยที่เลือกไว้ก่อนศึก (สูงสุด 2 ใบ) — 🛡️ รถทุบหุ้มเหล็กต้องมีผลก่อนสร้างรถทุบทุกคัน
+    this.loadouts = new Set(mission.loadouts || []);
+    this.applyLoadoutRamStats();
     this.citySides = cityRefs.sides;
     this.doorL = cityRefs.doorL;
     this.doorR = cityRefs.doorR;
@@ -292,6 +297,8 @@ export class Battle {
     this.stats.deployedTotal = this.companies.reduce((a, c) => a + c.soldiers.length, 0);
 
     mission.sides.forEach((cfg, side) => this.defenses.push(new DefenseSide(side, cfg, this)));
+    // เมืองสุ่ม 🟦 คูเมือง: ด้านที่ได้ลักษณะนี้ (ถ้ามี) ฝ่ายบุกเดินช้าลงช่วงหน้ากำแพงด้านนั้น
+    this.moatSide = mission.sides.findIndex((s) => s.feature === 'moat');
     this.reserves = new ReserveForce(this);
     this.garrison = new Garrison(this);
     this.stats.defendersInitial = this.defenses.reduce((a, d) => a + d.aliveCount(), 0)
@@ -300,8 +307,10 @@ export class Battle {
 
     for (const c of this.companies) this.setupCompanyVisuals(c);
     // ท่าแม่ทัพ: คูลดาวน์แตรรวมพล + สิทธิ์เรียกกองหนุน (ได้เพิ่มทุกครั้งที่ยึดกำแพงนอกได้อีกด้าน)
-    this.abilities = { hornCd: 0, reinforceCharges: 0 };
+    // + ยุทธปัจจัยที่ใช้ได้ครั้งเดียวต่อศึก (ไส้ศึก/กองขุดอุโมงค์) และคูลดาวน์ห่าธนูไฟ ถ้าเลือกมา
+    this.abilities = { hornCd: 0, reinforceCharges: 0, fireVolleyCd: 0, spySabotageUsed: false, sapperUsed: false };
     this.hornBuffed = new Set();
+    this.sapper = { active: false, side: null, t: 0 }; // ⛏️ กองขุดอุโมงค์: กำลังขุดอยู่หรือไม่ ด้านไหน เหลือเวลาเท่าไหร่
     // ตัวช่วยมองเห็นทหารเมือง: วงสีใต้เท้า + ป้ายจำนวนต่อกลุ่ม (อัปเดตจาก main ทุกเฟรม แม้หยุดเกม)
     this.defMarkers = new DefenderMarkers(this.group);
     this.defLabels = new DefenderGroupLabels(this.group);
@@ -352,8 +361,10 @@ export class Battle {
     return true;
   }
 
+  // คูลดาวน์ท่าแม่ทัพทั้งหมด + คืนค่าบัฟแตรรวมพลเมื่อหมดเวลา
   updateHornBuff(dt) {
     if (this.abilities.hornCd > 0) this.abilities.hornCd = Math.max(0, this.abilities.hornCd - dt);
+    if (this.abilities.fireVolleyCd > 0) this.abilities.fireVolleyCd = Math.max(0, this.abilities.fireVolleyCd - dt);
     if (!this.hornBuffed.size) return;
     for (const s of [...this.hornBuffed]) {
       if (s.alive) s.hornT -= dt;
@@ -393,6 +404,80 @@ export class Battle {
     this.stats.deployedTotal += n;
     this.onEvent('ability_reinforce', { n, companies, chargesLeft: this.abilities.reinforceCharges });
     return true;
+  }
+
+  // 🛡️ รถทุบหุ้มเหล็ก: ตั้งค่าใหม่จาก RAM_HP_BASE เสมอไม่ว่าจะเลือกยุทธปัจจัยนี้หรือไม่ กันไม่ให้ตัวคูณ
+  // สะสมข้ามศึกที่เล่นซ้ำในเซสชันเดียวกัน (แยกเป็น method ให้ทดสอบได้โดยไม่ต้องสร้าง Battle เต็มรูปแบบ)
+  applyLoadoutRamStats() {
+    const AR = CFG.loadouts.armoredRam;
+    CFG.unit.ram.ramHp = this.loadouts.has('armoredRam') ? Math.round(RAM_HP_BASE * AR.ramHpMul) : RAM_HP_BASE;
+    if (this.loadouts.has('armoredRam')) CFG.unit.ram.batterRate *= AR.ramRateMul;
+  }
+
+  // ด้านที่มีกองอยู่ในตัวเลือกปัจจุบันมากที่สุด — ใช้กำหนดเป้าให้ 🔥 ห่าธนูไฟ และ ⛏️ กองขุดอุโมงค์
+  // (ไม่ต้องมี UI คลิกจุดเพิ่ม แค่เลือกกองที่กำลังบุกด้านนั้นอยู่แล้วกดใช้ท่า)
+  majoritySelectedSide() {
+    const counts = [0, 0, 0, 0];
+    for (const c of this.selection) if (c.side >= 0 && c.side <= 3) counts[c.side]++;
+    let side = -1, best = 0;
+    counts.forEach((n, i) => { if (n > best) { best = n; side = i; } });
+    return side;
+  }
+
+  // 🔥 ห่าธนูไฟ: ฝ่ายเมืองด้านที่เลือกไว้ยิงธนู/กลิ้งหินไม่ได้ชั่วคราว — เปิดทางให้บุกต่อโดยไม่โดนสวน
+  useFireVolley() {
+    if (!this.loadouts.has('fireVolley') || this.abilities.fireVolleyCd > 0) return false;
+    const side = this.majoritySelectedSide();
+    if (side < 0) return false;
+    const F = CFG.loadouts.fireVolley;
+    const d = this.defenses[side];
+    d.suppressedT = F.duration;
+    d.roller.phase = 'pause';
+    d.roller.visual.visible = false;
+    d.roller.timer = Math.max(d.roller.timer, 0.4);
+    this.abilities.fireVolleyCd = F.cooldown;
+    this.onEvent('ability_fire_volley', { side });
+    return true;
+  }
+
+  // 🕵️ ไส้ศึก (ใช้ได้ครั้งเดียวต่อศึก): เลือกประตูชั้นในที่ใกล้แตกที่สุดในบรรดาประตูที่ยังไม่เปิด
+  // (กำลังถูกฟันอยู่มาก่อนเสมอ ถ้ายังไม่มีใครเริ่มฟันเลยค่อยเอาชั้นแรกสุดที่ยังปิด)
+  useSpySabotage() {
+    if (!this.loadouts.has('spySabotage') || this.abilities.spySabotageUsed) return false;
+    const target = [...this.innerGates].filter((g) => !g.open)
+      .sort((a, b) => Number(b.started) - Number(a.started) || (a.hp / a.hpMax) - (b.hp / b.hpMax))[0];
+    if (!target) return false;
+    target.hp = Math.max(1, target.hp * 0.5);
+    this.abilities.spySabotageUsed = true;
+    this.onEvent('ability_spy', { ring: target.ring });
+    return true;
+  }
+
+  // ⛏️ กองขุดอุโมงค์ (ใช้ได้ครั้งเดียวต่อศึก): เริ่มขุดใต้กำแพงด้านที่กำลังเลือกอยู่ ผลลัพธ์ (ถล่ม) มาถึงหลังเวลาขุด
+  useSapperTunnel() {
+    if (!this.loadouts.has('sapperTunnel') || this.abilities.sapperUsed || this.sapper.active) return false;
+    const side = this.majoritySelectedSide();
+    if (side < 0) return false;
+    const S = CFG.loadouts.sapperTunnel;
+    this.sapper = { active: true, side, t: S.channelTime };
+    this.abilities.sapperUsed = true;
+    this.onEvent('ability_sapper_start', { side, t: S.channelTime });
+    return true;
+  }
+
+  updateSapper(dt) {
+    if (!this.sapper.active) return;
+    this.sapper.t -= dt;
+    if (this.sapper.t > 0) return;
+    this.sapper.active = false;
+    const { side } = this.sapper;
+    const S = CFG.loadouts.sapperTunnel;
+    const alive = this.defenses[side].melee.filter((s) => s.alive);
+    const n = Math.round(alive.length * S.casualtyFrac);
+    for (let i = 0; i < n; i++) alive[i].die();
+    this.shake = Math.max(this.shake, 0.6);
+    this.spawnSpark(sectionCenter(side), 'dust', 14, 3.5);
+    this.onEvent('ability_sapper_collapse', { side, n });
   }
 
   // ---------- คำสั่งจากแม่ทัพ ----------
@@ -1107,6 +1192,7 @@ export class Battle {
     this.rebuildMovementGrid();
     this.updateFeintHeat(dt);
     this.updateHornBuff(dt);
+    this.updateSapper(dt);
 
     for (const d of this.defenses) d.update(dt);
     this.reserves.update(dt);
@@ -1204,7 +1290,18 @@ export class Battle {
     return true;
   }
 
+  // 🟦 คูเมือง (ถ้าด้านนี้สุ่มได้ลักษณะนี้): แค่ลดความเร็วที่ตั้งใจเดิน ไม่แตะทิศทาง/แรงกันชนใด ๆ เลย
+  // จึงไม่เสี่ยงสร้างบั๊กแบบเดียวกับแรงผลักฝูงชนที่เคยทำให้ทหารค้างสนิท — แค่เดินช้าลงเท่านั้น
+  moatFactor(pos) {
+    if (this.moatSide < 0) return 1;
+    const m = distOutOf(pos);
+    const V = CITY_VARIATION;
+    if (m < CFG.wallHalf + CFG.wallThick || m > CFG.wallHalf + CFG.wallThick + V.moatDepth) return 1;
+    return sectionOf(pos) === this.moatSide ? V.moatSlowFactor : 1;
+  }
+
   stepGroundUnit(s, dt, target, speed = s.speed, arriveR = 0.35) {
+    speed *= this.moatFactor(s.pos);
     _t1.subVectors(target, s.pos).setY(0);
     const distance = _t1.length();
     if (distance <= arriveR) { s.moving = false; return true; }

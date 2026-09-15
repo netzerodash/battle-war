@@ -120,6 +120,15 @@ export const CFG = {
     reinforce: { composition: { spear: 4, shield: 2 }, squadSize: 10 },
   },
 
+  // ยุทธปัจจัย: เลือกก่อนศึก 2 ใน 4 ใบ (หน้าเริ่มเกม) — ทำให้แต่ละศึกไม่เหมือนกัน
+  // ระยะสั่ง: 🔥/⛏️ อ่านด้านจากกองที่กำลังเลือกอยู่ตอนใช้ (ด้านที่มีกองเลือกมากที่สุด)
+  loadouts: {
+    fireVolley: { cooldown: 45, duration: 8 }, // 🔥 ห่าธนูไฟ: ยิงกดฝ่ายเมืองด้านที่เลือกไว้ ยิงธนู/กลิ้งหินไม่ได้ชั่วคราว
+    spySabotage: {},                            // 🕵️ ไส้ศึก: ใช้ได้ครั้งเดียว — ประตูชั้นในที่ใกล้แตกที่สุดเสียความแข็งแรงทันทีครึ่งหนึ่ง
+    sapperTunnel: { channelTime: 40, casualtyFrac: 0.35 }, // ⛏️ กองขุดอุโมงค์: ใช้ได้ครั้งเดียว — ขุด 40 วิแล้วกำแพงด้านนั้นถล่ม
+    armoredRam: { ramHpMul: 1.6, ramRateMul: 1.25 }, // 🛡️ รถทุบหุ้มเหล็ก: ติดตัวตลอดศึก ไม่ต้องกดใช้
+  },
+
   // ม้าซอง (sally) — เมืองเปิดประตูส่งม้าออกไปถล่มเครื่องโจมตีแล้วถอย
   sortie: {
     cooldown: 60, duration: 16, horses: 32,
@@ -213,12 +222,47 @@ export const UNIT_LABEL = {
   ram: '⚫ รถทุบประตู', cav: '🟡 ทหารม้า',
 };
 
+// ยุทธปัจจัย: ข้อมูลสำหรับหน้าเลือกก่อนศึกและ HUD — ตัวเลขจริงอยู่ที่ CFG.loadouts ด้านบน
+export const LOADOUT_INFO = Object.freeze({
+  fireVolley: {
+    label: 'ห่าธนูไฟ', icon: '🔥', kind: 'active', key: 'c',
+    blurb: 'สั่งยิงธนูไฟใส่ฝ่ายเมืองด้านที่กำลังเลือกอยู่ — ยิงธนู/กลิ้งหินไม่ได้ 8 วิ · คูลดาวน์ 45 วิ',
+  },
+  spySabotage: {
+    label: 'ไส้ศึก', icon: '🕵️', kind: 'once', key: 'c',
+    blurb: 'ใช้ได้ครั้งเดียว: ประตูชั้นในที่ใกล้แตกที่สุดเสียความแข็งแรงทันทีครึ่งหนึ่ง',
+  },
+  sapperTunnel: {
+    label: 'กองขุดอุโมงค์', icon: '⛏️', kind: 'once', key: 'c',
+    blurb: 'ใช้ได้ครั้งเดียว: เลือกกองที่กำลังบุกด้านไหน ขุด 40 วิแล้วกำแพงด้านนั้นถล่ม',
+  },
+  armoredRam: {
+    label: 'รถทุบหุ้มเหล็ก', icon: '🛡️', kind: 'passive',
+    blurb: 'ติดตัวตลอดศึก ไม่ต้องกดใช้: รถทุบทนขึ้น 60% และทุบประตูเร็วขึ้น 25%',
+  },
+});
+
 const ROCK_PATTERNS = [
   { key: 'wave', name: 'กลิ้งเป็นระลอก', burst: 2, rollGap: 1.1, pause: 4.2 },
   { key: 'rapid', name: 'กลิ้งรัวต่อเนื่อง', burst: 3, rollGap: 0.85, pause: 3.6 },
   { key: 'sparse', name: 'กลิ้งเบาบาง', burst: 1, rollGap: 0, pause: 2.9 },
   { key: 'longGap', name: 'ทิ้งช่วงยาว', burst: 3, rollGap: 1.0, pause: 6.8 },
 ];
+
+// เมืองสุ่มตาม seed: แต่ละด้านได้ "ลักษณะ" ไม่ซ้ำกัน (seed เดิม = เมืองเดิม) — ไม่แตะแกนประตู/รูปทรงเมือง
+// สามชั้นเดิมเลย เพราะระบบเส้นทาง/ช่องประตู/บันไดในผูกกับแกนใต้อยู่หลายสิบจุด เปลี่ยนแค่ "จำนวน/ความเร็ว"
+export const CITY_VARIATION = Object.freeze({
+  weakMeleeMul: 0.7,      // 🟥 กำแพงร้าว: ทหารกำแพงน้อยกว่า ยึดได้เร็วกว่า
+  reinforcedArcherMul: 1.35, // 🟨 หอธนูเสริม: พลธนูด้านนั้นเพิ่มขึ้น
+  moatSlowFactor: 0.5,    // 🟦 คูเมือง: ความเร็วเดินของฝ่ายบุกช้าลงครึ่งหนึ่งช่วงหน้ากำแพงด้านนั้น
+  moatDepth: 14,          // ความลึกของแถบคูเมืองนับจากหน้ากำแพงนอกออกมา
+});
+export const SIDE_FEATURE_LABELS = Object.freeze({
+  normal: 'ปกติ', weak: '🟥 กำแพงร้าว', reinforced: '🟨 หอธนูเสริม', moat: '🟦 คูเมือง',
+});
+// ด้านใต้ (index 2) มีประตู+รถทุบตั้งทัพอยู่แล้ว ไม่ให้เป็นคูเมือง (ถือว่ามีสะพานชักข้ามไว้แล้ว)
+const FEATURE_POOL = ['normal', 'normal', 'weak', 'reinforced', 'moat'];
+const FEATURE_POOL_SOUTH = ['normal', 'normal', 'weak', 'reinforced'];
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -231,17 +275,23 @@ export function mulberry32(seed) {
 }
 
 // สุ่มการวางกำลังฝ่ายเมืองของแต่ละภารกิจ (seed เดิม + ระดับเดิม = ภารกิจเดิม)
-export function genMission(seed = Math.floor(Math.random() * 1e9), difficulty = 'normal') {
+// ยุทธปัจจัยที่เลือกได้ก่อนศึก (สูงสุด 2 ใบ) — ค่าไม่ถูกต้องถูกกรองทิ้งเงียบ ๆ กันหน้าเริ่มเกมพัง
+const LOADOUT_KEYS = new Set(['fireVolley', 'spySabotage', 'sapperTunnel', 'armoredRam']);
+export function genMission(seed = Math.floor(Math.random() * 1e9), difficulty = 'normal', loadouts = []) {
   const key = DIFFICULTIES[difficulty] ? difficulty : 'normal';
   const rng = mulberry32(seed);
   const sides = [];
   for (let i = 0; i < 4; i++) {
+    const pool = i === 2 ? FEATURE_POOL_SOUTH : FEATURE_POOL;
+    const feature = pool[Math.floor(rng() * pool.length)];
     sides.push({
-      melee: Math.round(BASE.wallMelee * DIFFICULTIES[key].wallMelee),
-      archers: CFG.wallArchers,
+      melee: Math.round(BASE.wallMelee * DIFFICULTIES[key].wallMelee * (feature === 'weak' ? CITY_VARIATION.weakMeleeMul : 1)),
+      archers: Math.round(CFG.wallArchers * (feature === 'reinforced' ? CITY_VARIATION.reinforcedArcherMul : 1)),
       archerCd: CFG.archerCd * (0.85 + rng() * 0.3),
       pattern: ROCK_PATTERNS[Math.floor(rng() * ROCK_PATTERNS.length)],
+      feature,
     });
   }
-  return { seed, sides, difficulty: key };
+  const chosenLoadouts = [...new Set(loadouts)].filter((k) => LOADOUT_KEYS.has(k)).slice(0, 2);
+  return { seed, sides, difficulty: key, loadouts: chosenLoadouts };
 }

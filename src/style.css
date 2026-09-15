@@ -258,6 +258,9 @@ body:not(.touch) #touchbar { display: none !important; }
   position: absolute; bottom: 2px; right: 4px; font: 700 12px/1 inherit; color: #f0d27a;
 }
 .ability-slot.no-charge .charge-num { color: var(--dim); }
+/* 🛡️ รถทุบหุ้มเหล็ก: ยุทธปัจจัยติดตัวตลอดศึก ไม่ต้องกด — เป็น <div> ไม่ใช่ปุ่ม โชว์เฉย ๆ ว่ากำลังมีผล */
+.ability-slot.passive { cursor: default; border-style: dashed; }
+.ability-slot.passive:hover { border-color: var(--panel-line); }
 @media (max-width: 1000px) {
   .ability-bar { right: 6px; bottom: 70px; gap: 5px; }
   .ability-slot { width: 52px; height: 52px; }
@@ -396,6 +399,22 @@ kbd, kbd.inline {
 .difficulty label:has(input:checked) { border-color: var(--gold); background: rgba(217, 164, 65, .12); }
 .difficulty label:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
 @media (max-width: 640px) { .difficulty { grid-template-columns: 1fr; } }
+
+/* ---------- ยุทธปัจจัยก่อนศึก (เลือก 2 ใบ) ---------- */
+.loadouts { border: 0; margin: 4px 0; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.loadout-card {
+  display: flex; flex-direction: column; gap: 3px; padding: 9px 11px;
+  border: 1px solid var(--panel-line); border-radius: 9px;
+  background: rgba(0, 0, 0, .22); cursor: pointer; position: relative;
+}
+.loadout-card input { position: absolute; top: 9px; right: 10px; accent-color: var(--gold); width: 15px; height: 15px; }
+.loadout-card .lo-ic { font-size: 19px; line-height: 1; }
+.loadout-card b { font-size: 13.5px; padding-right: 20px; }
+.loadout-card small { font-size: 11px; color: var(--dim); line-height: 1.4; }
+.loadout-card:has(input:checked) { border-color: var(--gold); background: rgba(217, 164, 65, .12); }
+.loadout-card:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
+.loadout-card:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
+@media (max-width: 640px) { .loadouts { grid-template-columns: 1fr; } }
 
 /* ---------- จุดสี (ใช้ในไอคอนหน่วยและแผนที่ย่อ) ---------- */
 .dot {
