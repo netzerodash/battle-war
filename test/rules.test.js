@@ -803,6 +803,25 @@ test('horn rally speeds up and sharpens the selected companies, then reverts exa
   assert.equal(battle.hornBuffed.size, 0, 'the expired soldier should be dropped from tracking');
 });
 
+test('the end-of-battle event reports which loadouts were chosen and whether the one-shot ones were actually used', () => {
+  const events = [];
+  const battle = {
+    stats: {}, captured: [false, false, false, false], gate: { open: true }, time: 123,
+    difficulty: 'normal', innerGates: [{ open: true }, { open: false }], palace: { progress: 0.4 },
+    loadouts: new Set(['spySabotage', 'armoredRam']),
+    abilities: { spySabotageUsed: true, sapperUsed: false },
+    onEvent: (t, d) => events.push([t, d]),
+  };
+  Battle.prototype.end.call(battle, 'win');
+  assert.equal(battle.ended, true);
+  assert.equal(battle.result, 'win');
+  const [type, data] = events[0];
+  assert.equal(type, 'end');
+  assert.deepEqual(data.loadouts.sort(), ['armoredRam', 'spySabotage']);
+  assert.equal(data.loadoutsUsed.spySabotage, true, 'the spy was actually used this battle');
+  assert.equal(data.loadoutsUsed.sapperTunnel, false, 'the sapper (not chosen this battle) must not read as used');
+});
+
 test('a reinforcement wave only arrives once a wall side has actually been captured', () => {
   const events = [];
   const battle = {

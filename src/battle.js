@@ -2331,6 +2331,9 @@ export class Battle {
       result, stats: { ...this.stats }, captured: [...this.captured], gateOpen: this.gate.open, time: this.time,
       difficulty: this.difficulty,
       innerGatesOpen: this.innerGates.map((g) => g.open), palaceProgress: this.palace.progress,
+      loadouts: [...this.loadouts], loadoutsUsed: {
+        spySabotage: this.abilities.spySabotageUsed, sapperTunnel: this.abilities.sapperUsed,
+      },
     });
   }
 

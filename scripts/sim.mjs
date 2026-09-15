@@ -11,8 +11,10 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_SEEDS = [101, 202, 303, 404, 505, 606];
-const BOT_NAMES = ['brute', 'planned', 'escalade'];
-const BOT_LABELS = { brute: 'รุมมั่ว', planned: 'วางแผน', escalade: 'พาดบันได' };
+const BOT_NAMES = ['brute', 'planned', 'escalade', 'commander'];
+const BOT_LABELS = { brute: 'รุมมั่ว', planned: 'วางแผน', escalade: 'พาดบันได', commander: 'แม่ทัพ' };
+// บอทแม่ทัพเลือกยุทธปัจจัยตายตัวไว้ล่วงหน้า (ไม่มี UI ให้บอทเลือกเอง) — บอทอื่นไม่เลือกเลย (ค่าเริ่มต้น)
+const BOT_LOADOUTS = { commander: ['armoredRam', 'fireVolley'] };
 
 if (isMainThread) {
   main().catch((err) => { console.error(err); process.exit(1); });
@@ -106,7 +108,7 @@ async function runBattle({ bot, seed, level }) {
     if (type === 'gate_open' || type === 'gate_breached') log.gatesAt[0] ??= battle.time;
     if (type === 'inner_gate_open') log.gatesAt[data.ring] ??= battle.time;
   };
-  battle = new Battle(genMission(seed, level), scene, city, onEvent);
+  battle = new Battle(genMission(seed, level, BOT_LOADOUTS[bot] || []), scene, city, onEvent);
   battle.spawnMarker = () => {};
   const player = makeBot(bot, battle, { THREE, CFG, worldPoint });
   const dt = 1 / 30;
@@ -166,7 +168,8 @@ function makeBot(name, battle, ctx) {
     return { tick: followUp };
   }
 
-  // วางแผน: หลอกล่อด้านเหนือ/ตะวันตกด้วยพลโล่ · ธนูกดกำแพงสองด้านที่บุก · บุกใต้ (มีรถทุบ) + ตะวันออก · ระลอกสองตามเข้าไป
+  // วางแผน (และแม่ทัพที่ใช้แผนเดียวกันเป็นฐาน): หลอกล่อด้านเหนือ/ตะวันตกด้วยพลโล่ · ธนูกดกำแพงสองด้านที่บุก
+  // · บุกใต้ (มีรถทุบ) + ตะวันออก · ระลอกสองตามเข้าไป
   const W = CFG.wallHalf + CFG.wallThick;
   for (const side of [0, 3]) if (select((c) => c.side === side && c.ctype === 'shield')) order(worldPoint(side, 0, W + 34, 0), { type: 'field' });
   assault((c) => c.ctype === 'archer' && (c.side === 2 || c.side === 3), 2);
@@ -174,14 +177,33 @@ function makeBot(name, battle, ctx) {
   assault((c) => c.side === 2 && c.ctype !== 'cav' && c.ctype !== 'archer', 2);
   assault((c) => c.side === 1 && (c.ctype === 'spear' || c.ctype === 'shield'), 1);
   let wave2 = false;
+  const plannedTick = () => {
+    if (!wave2 && battle.time > 40) {
+      wave2 = true;
+      assault((c) => c.side === 3 && c.ctype === 'spear' && c.state === 'idle', 2);
+      assault((c) => c.side === 0 && c.ctype === 'spear' && c.state === 'idle', 1);
+    }
+    followUp();
+  };
+  if (name !== 'commander') return { tick: plannedTick };
+
+  // แม่ทัพ: แผนเดียวกับ "วางแผน" + ใช้ท่าแม่ทัพและยุทธปัจจัยเชิงรุกทุกครั้งที่มีสิทธิ์
+  // (คัดกองที่กำลังรบ/บุกอยู่จริงมาเป็นเป้าของแต่ละท่า แล้วคืนตัวเลือกให้ plannedTick คุมต่อตามปกติ)
+  const useOnFighting = (useFn) => {
+    const fighting = battle.companies.filter((c) => c.aliveSoldiers.length
+      && (c.state === 'cityMarch' || c.mode === 'city' || c.mode === 'assault'));
+    if (!fighting.length) return false;
+    battle.clearSelection();
+    for (const c of fighting) { c.selected = true; battle.selection.add(c); }
+    return useFn();
+  };
   return {
     tick() {
-      if (!wave2 && battle.time > 40) {
-        wave2 = true;
-        assault((c) => c.side === 3 && c.ctype === 'spear' && c.state === 'idle', 2);
-        assault((c) => c.side === 0 && c.ctype === 'spear' && c.state === 'idle', 1);
-      }
-      followUp();
+      plannedTick();
+      if (battle.abilities.hornCd <= 0) useOnFighting(() => battle.useHornRally());
+      if (battle.abilities.reinforceCharges > 0) battle.useReinforcementWave();
+      if (battle.loadouts.has('fireVolley') && battle.abilities.fireVolleyCd <= 0) useOnFighting(() => battle.useFireVolley());
+      battle.clearSelection(); // ไม่ทิ้งตัวเลือกค้างไว้ให้ followUp รอบหน้าสับสน
     },
   };
 }
