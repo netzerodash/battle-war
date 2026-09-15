@@ -13,3 +13,12 @@ export function palaceProgressStep(progress, attackers, defenders, dt, { holdTim
 }
 
 export const canUnitClimb = (type) => type !== 'cav' && type !== 'archer';
+
+// จังหวะดราม่า/เพลงรบ: ความเข้มของศึกตอนนี้ — เมืองนอก (ยังไม่เปิดประตู) → เมืองชั้นใน (เปิดแล้ว
+// แต่ยังไม่ถึงลานวัง) → ลานวัง (มีทหารเราในลานวังแล้ว หรือกำลังยึดอยู่) ใช้ปรับจังหวะกลองและเลือกฉากตัด
+export function siegeIntensity(gateOpen, palaceEngaged) {
+  if (palaceEngaged) return 'palace';
+  if (gateOpen) return 'inner';
+  return 'outer';
+}
+export const DRUM_INTERVAL = Object.freeze({ outer: 1.9, inner: 1.5, palace: 1.05 });

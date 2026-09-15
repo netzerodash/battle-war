@@ -268,6 +268,19 @@ body:not(.touch) #touchbar { display: none !important; }
   .ability-slot .nm { font-size: 8px; }
 }
 
+/* ---------- จังหวะดราม่า: แถบดำบน-ล่างตอนกล้องตัดฉาก ---------- */
+.letterbox { position: fixed; inset: 0; z-index: 15; pointer-events: none; }
+.letterbox.hidden { display: none; }
+.lb-bar {
+  position: fixed; left: 0; right: 0; height: 0;
+  background: #000; opacity: 0.82;
+  transition: height 0.6s ease;
+}
+.lb-top { top: 0; }
+.lb-bottom { bottom: 0; }
+.letterbox.show .lb-bar { height: 9vh; }
+@media (prefers-reduced-motion: reduce) { .lb-bar { transition: none; } }
+
 .banner {
   position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
   max-width: min(760px, 92vw);

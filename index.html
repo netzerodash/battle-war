@@ -11,6 +11,8 @@
 <body>
   <div id="app"></div>
   <div id="selbox"></div>
+  <!-- จังหวะดราม่า: แถบดำบน-ล่างตอนกล้องตัดฉาก (ประตูแตก/ถึงลานวังครั้งแรก/ยึดวังใกล้สำเร็จ) -->
+  <div id="letterbox" class="letterbox hidden"><div class="lb-bar lb-top"></div><div class="lb-bar lb-bottom"></div></div>
 
   <!-- Intro — ทัวร์แบบภาพ: ดูออกไวกว่าอ่าน ใช้ไอคอน/ป้ายแทนพารากราฟยาว รายละเอียดเต็มอยู่ใน ? -->
   <div id="intro" class="overlay">
@@ -111,6 +113,7 @@
         <button id="btn-unit-view" class="menu-item" role="menuitem" disabled>👁 มุมทหาร</button>
         <button id="btn-focus-combat" class="menu-item" role="menuitem">⚔ ไปจุดปะทะล่าสุด</button>
         <button id="btn-sound" class="menu-item" role="menuitem">🔊 เสียง: เปิด</button>
+        <button id="btn-drama" class="menu-item" role="menuitem">🎬 ฉากดราม่า: เปิด</button>
         <button id="btn-hide-hud" class="menu-item" role="menuitem">🙈 ซ่อน HUD (H)</button>
         <button id="btn-help" class="menu-item" role="menuitem">❔ วิธีเล่น (?)</button>
         <button id="btn-abort" class="menu-item danger" role="menuitem">🏳 ธงขาว</button>

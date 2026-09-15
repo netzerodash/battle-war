@@ -2,7 +2,7 @@ import test from 'node:test';
 globalThis.window ??= {}; // เสียงสังเคราะห์เรียก window เฉพาะตอนเล่นเสียง — ในเทสต์ไม่มีเบราว์เซอร์
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { battleOutcome, canUnitClimb, palaceProgressStep } from '../src/rules.js';
+import { battleOutcome, canUnitClimb, palaceProgressStep, siegeIntensity } from '../src/rules.js';
 import { formationDestinations, unitSlot } from '../src/formation.js';
 import {
   gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS,
@@ -1237,4 +1237,31 @@ test('the moat slows an attacker approaching its own wall side, and never touche
   assert.equal(Battle.prototype.moatFactor.call(withMoat, otherSide), 1);
   const farField = new THREE.Vector3(0, 0, CFG.wallHalf + CFG.wallThick + CITY_VARIATION.moatDepth + 20); // พ้นแถบคูไปแล้ว
   assert.equal(Battle.prototype.moatFactor.call(withMoat, farField), 1);
+});
+
+test('a palace hold nearing its threshold fires a one-time drama event, not one every frame it stays above it', () => {
+  const events = [];
+  const attackers = Array.from({ length: 5 }, () => ({ alive: true, zone: 'palace' }));
+  const battle = {
+    cityAttackers: new Set(attackers), garrison: { soldiers: [] },
+    palace: { progress: 0, atk: 0, def: 0 }, palaceFlag: null,
+    onEvent: (t, d) => events.push([t, d]),
+  };
+  // ยึดต่อเนื่องจนข้ามเกณฑ์ palaceThreshold (0.75 ของ holdTime) — ก่อนถึงต้องยังไม่มีอีเวนต์
+  const T = CFG.drama.palaceThreshold;
+  const stepsBeforeThreshold = Math.floor((T * CFG.palace.holdTime) / 0.5) - 2;
+  for (let i = 0; i < stepsBeforeThreshold; i++) Battle.prototype.updatePalace.call(battle, 0.5);
+  assert.ok(battle.palace.progress < T, 'sanity: should not have crossed yet');
+  assert.equal(events.filter(([t]) => t === 'palace_near_win').length, 0);
+  // เดินต่อจนข้ามเกณฑ์แน่นอน แล้วยึดต่ออีกหลายเฟรม — ต้องได้อีเวนต์แค่ครั้งเดียว ไม่ใช่ทุกเฟรมที่ยังอยู่เหนือเกณฑ์
+  for (let i = 0; i < 20; i++) Battle.prototype.updatePalace.call(battle, 0.5);
+  assert.ok(battle.palace.progress >= T);
+  assert.equal(events.filter(([t]) => t === 'palace_near_win').length, 1, 'crossing the threshold once should fire exactly one drama event, not one per frame while above it');
+});
+
+test('siege intensity escalates outer -> inner -> palace and never regresses just because the palace fight cools off mid-hold', () => {
+  assert.equal(siegeIntensity(false, false), 'outer');
+  assert.equal(siegeIntensity(true, false), 'inner');
+  assert.equal(siegeIntensity(true, true), 'palace');
+  assert.equal(siegeIntensity(false, true), 'palace', 'once soldiers are contesting the palace it must read as the palace phase even if the outer gate flag is stale');
 });

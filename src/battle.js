@@ -1006,6 +1006,9 @@ export class Battle {
     this.palace.def = def;
     this.palace.progress = palaceProgressStep(before, atk, def, dt, CFG.palace);
     if (before === 0 && this.palace.progress > 0) this.onEvent('palace_contest', {});
+    // จังหวะดราม่า: ใกล้ยึดวังสำเร็จ — แจ้งครั้งเดียวตอนข้ามเกณฑ์ขึ้นไป (ถอยกลับลงมาใหม่ก็แจ้งได้อีกครั้งตอนข้ามขึ้นรอบใหม่)
+    const T = CFG.drama.palaceThreshold;
+    if (before < T && this.palace.progress >= T) this.onEvent('palace_near_win', {});
     if (this.palaceFlag) this.palaceFlag.flagMat.color.copy(PALACE_CITY).lerp(PALACE_TAKEN, this.palace.progress);
   }
 

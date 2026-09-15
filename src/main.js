@@ -7,6 +7,7 @@ import { SIDE_VECS, classifyOrderPoint, sectionOf } from './world.js';
 import * as UI from './ui.js';
 import { Minimap } from './minimap.js';
 import { initAudio, setMuted, isMuted, sfx } from './audio.js';
+import { siegeIntensity, DRUM_INTERVAL } from './rules.js';
 
 const { renderer, scene, camera, controls } = initScene(document.getElementById('app'));
 const city = buildCity(scene);
@@ -287,6 +288,7 @@ function pickCompaniesInRect(x0, y0, x1, y1) {
 
 // ---------- โฟลว์เกม ----------
 function startBattle(rerollMission) {
+  endDramaCut(); // กันเผื่อฉากดราม่าจากศึกก่อนหน้าค้างอยู่ (ปกติ event 'end' จะเคลียร์ให้แล้ว)
   if (battle) { scene.remove(battle.group); battle = null; }
   const wantLoadouts = selectedLoadouts();
   const loadoutsChanged = JSON.stringify([...(mission.loadouts || [])].sort()) !== JSON.stringify([...wantLoadouts].sort());
@@ -344,7 +346,14 @@ function onBattleEvent(type, data) {
     case 'escalade_start': UI.toast(`🪜 ตั้งบันไดพาด${WALL_NAMES[data.ring]}ด้าน${SIDE_NAMES[data.side]} — ทหารเริ่มไต่ข้าม!`, 'blue'); break;
     case 'inner_gate_attack': UI.toast(`🪓 ทหารเราเริ่มฟัน${GATE_NAMES[data.ring]}!`); break;
     case 'inner_gate_open': UI.toast(`🚪 ${GATE_NAMES[data.ring]}${data.breached ? 'พังแล้ว' : 'ถูกแงะเปิดจากด้านใน'}! กองที่รอหน้าประตูบุกต่อทันที`, 'big blue'); sfx.cheer(); break;
-    case 'palace_contest': UI.toast('🏯 ทหารเราบุกถึงลานวังต้องห้าม! ยึดลานให้ครบเวลา — ต้องมีคนมากกว่าองครักษ์', 'big blue'); sfx.horn(); break;
+    case 'palace_contest':
+      UI.toast('🏯 ทหารเราบุกถึงลานวังต้องห้าม! ยึดลานให้ครบเวลา — ต้องมีคนมากกว่าองครักษ์', 'big blue'); sfx.horn();
+      triggerDramaCut(new THREE.Vector3(0, 58, 78), new THREE.Vector3(0, 4, 6)); // มุมลานวัง — เหมือน focusPalace()
+      break;
+    case 'palace_near_win':
+      UI.toast('⚔️ ใกล้ยึดวังสำเร็จแล้ว! รักษาจำนวนให้มากกว่าองครักษ์ต่อไป', 'big blue');
+      triggerDramaCut(new THREE.Vector3(0, 58, 78), new THREE.Vector3(0, 4, 6));
+      break;
     case 'cav_enter': UI.toast('🐴 กองม้าพุ่งเข้าเมือง — ไล่ล่าทหารที่เหลือ!', 'blue'); break;
     case 'captured':
       UI.toast(`🚩 ยึดกำแพงด้าน${SIDE_NAMES[data.side]}! เลือกภารกิจต่อไป`, 'big blue');
@@ -368,7 +377,12 @@ function onBattleEvent(type, data) {
     case 'ram_lost': UI.toast('⚫ รถทุบถูกหินจากหอประตูทำลาย!', 'bad'); sfx.thud(); break;
     case 'gate_breached': UI.toast('💥 รถทุบกระหน่ำประตูจนแตกกระจาย! กองม้าเข้าได้!', 'big blue'); sfx.cheer(); break;
     case 'gate_opening': UI.toast('🔧 ทหารเรากำลังแงะประตูเมือง...'); break;
-    case 'gate_open': UI.toast('🚪 ประตูเมืองชั้นนอกเปิดแล้ว! เทกองเข้าเมือง แล้วฝ่าประตูชั้นในต่อ', 'big blue'); sfx.cheer(); break;
+    case 'gate_open': {
+      UI.toast('🚪 ประตูเมืองชั้นนอกเปิดแล้ว! เทกองเข้าเมือง แล้วฝ่าประตูชั้นในต่อ', 'big blue'); sfx.cheer();
+      const n = SIDE_VECS[2].n, far = CFG.wallHalf + 88; // มุมประตูใต้ — เหมือน focusSide(2)
+      triggerDramaCut(new THREE.Vector3(n.x * far, 92, n.z * far), new THREE.Vector3(n.x * CFG.wallHalf, 10, n.z * CFG.wallHalf));
+      break;
+    }
     case 'evacuate': UI.toast(`🏰 ฝ่ายเมืองสละกำแพงด้าน${SIDE_NAMES[data.side]} ลงมารวมพลขั้นสุดท้าย!`); sfx.hornLow(); break;
     case 'oil_poured': if (data.hit > 0) UI.toast(`🔥 น้ำมันเดือดราดหน้า${GATE_NAMES[data.ring]} — โดน ${data.hit} นาย (เหลือ ${data.potsLeft} หม้อ)`, 'bad'); break;
     case 'group_saved': UI.toast(`บันทึกกลุ่ม ${data.n}: ${data.count} กอง — กด ${data.n} เพื่อเรียก`, 'good'); break;
@@ -379,7 +393,7 @@ function onBattleEvent(type, data) {
     case 'ability_spy': UI.toast(`🕵️ ไส้ศึกแงะ${GATE_NAMES[data.ring]}สำเร็จ! ความแข็งแรงหายไปครึ่งหนึ่งทันที`, 'big blue'); sfx.cheer(); break;
     case 'ability_sapper_start': UI.toast(`⛏️ กองขุดอุโมงค์เริ่มขุดใต้กำแพงด้าน${SIDE_NAMES[data.side]} — จะถล่มใน ${data.t} วิ`, 'blue'); break;
     case 'ability_sapper_collapse': UI.toast(`⛏️ อุโมงค์ระเบิด! กำแพงด้าน${SIDE_NAMES[data.side]}ถล่ม ทหารเมือง ${data.n} นายล้ม`, 'big blue'); sfx.thud(); break;
-    case 'end': UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
+    case 'end': endDramaCut(); UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
   }
 }
 
@@ -638,6 +652,7 @@ window.addEventListener('keydown', (e) => {
   if (e.target.closest?.('select, input, textarea')) return;
   if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) { toggleHelp(); return; }
   if (e.code === 'KeyH' && !e.ctrlKey && !e.metaKey) { toggleHud(); return; }
+  if (e.key === 'Escape' && dramaCut) { endDramaCut(); return; } // ข้ามฉากดราม่าทันที
   if (e.key === 'Escape' && !helpEl.classList.contains('hidden')) { toggleHelp(false); return; }
   if (e.key === 'Escape' && !hudMenu.classList.contains('hidden')) { setMenu(false); return; }
   // กลุ่มกองแบบเกม RTS — ใช้รหัสปุ่ม (e.code) จึงใช้ได้แม้คีย์บอร์ดเป็นภาษาไทย
@@ -819,10 +834,85 @@ groupBar.addEventListener('pointerdown', (e) => {
 });
 for (const type of ['pointerup', 'pointercancel', 'pointerleave']) groupBar.addEventListener(type, () => clearTimeout(chipHold));
 
+// ---------- จังหวะดราม่า: กล้องตัดฉาก + สโลว์โมชันชั่วครู่ตอนเหตุการณ์สำคัญ ----------
+// (ประตูนอกแตก / ถึงลานวังครั้งแรก / ยึดวังใกล้สำเร็จ) — ปรับแค่ "ฉาก" ในลูปเรนเดอร์เท่านั้น
+// simulation ยังเดินด้วย fixed timestep เท่าเดิมทุกประการ ผลศึกจึงไม่เปลี่ยนแม้เปิด/ปิดท่านี้
+let dramaEnabled = true;
+try { dramaEnabled = localStorage.getItem('siege.drama') !== '0'; } catch { /* เปิดไว้เป็นค่าเริ่มต้น */ }
+const letterboxEl = document.getElementById('letterbox');
+const btnDrama = document.getElementById('btn-drama');
+function setDramaButtonLabel() { btnDrama.textContent = `🎬 ฉากดราม่า: ${dramaEnabled ? 'เปิด' : 'ปิด'}`; }
+setDramaButtonLabel();
+btnDrama.onclick = () => {
+  dramaEnabled = !dramaEnabled;
+  try { localStorage.setItem('siege.drama', dramaEnabled ? '1' : '0'); } catch { /* ไม่จำก็ได้ */ }
+  setDramaButtonLabel();
+  if (!dramaEnabled) endDramaCut();
+};
+
+let dramaCut = null; // { phase: 'in'|'hold'|'out', t, savedPos, savedTarget, toPos, toTarget }
+const dramaEase = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+
+function triggerDramaCut(toPos, toTarget) {
+  if (!dramaEnabled || dramaCut || !battle || battle.ended || unitViewSoldier) return;
+  if (dragStart || rightDown) return; // ผู้เล่นกำลังลากเลือก/หมุนกล้องอยู่ — ไม่แย่งกล้องกลางคัน
+  camera.__focusTween = null;
+  dramaCut = {
+    phase: 'in', t: 0,
+    savedPos: camera.position.clone(), savedTarget: controls.target.clone(),
+    toPos: toPos.clone(), toTarget: toTarget.clone(),
+  };
+  controls.enabled = false;
+  letterboxEl.classList.remove('hidden');
+  requestAnimationFrame(() => letterboxEl.classList.add('show'));
+}
+
+// ยกเลิกฉากดราม่าและคืนกล้องกลับที่เดิมทันที (Esc / ปิดสวิตช์ / ศึกจบกะทันหัน)
+function endDramaCut() {
+  if (!dramaCut) return;
+  controls.enabled = true;
+  camera.position.copy(dramaCut.savedPos);
+  controls.target.copy(dramaCut.savedTarget);
+  controls.update();
+  dramaCut = null;
+  letterboxEl.classList.remove('show');
+  setTimeout(() => { if (!dramaCut) letterboxEl.classList.add('hidden'); }, 650);
+}
+
+// เรียกทุกเฟรม — คืนตัวคูณความเร็ว "ฉาก" (ใช้กับแอนิเมชันภาพล้วน ๆ เท่านั้น ไม่แตะ fixed timestep จำลอง)
+function updateDramaCut(rawDt) {
+  if (!dramaCut) return 1;
+  const D = CFG.drama;
+  if (dramaCut.phase === 'in') {
+    dramaCut.t += rawDt / D.easeTime;
+    const k = Math.min(1, dramaCut.t);
+    camera.position.lerpVectors(dramaCut.savedPos, dramaCut.toPos, dramaEase(k));
+    controls.target.lerpVectors(dramaCut.savedTarget, dramaCut.toTarget, dramaEase(k));
+    if (k >= 1) { dramaCut.phase = 'hold'; dramaCut.t = 0; }
+    return 1;
+  }
+  if (dramaCut.phase === 'hold') {
+    dramaCut.t += rawDt; // นับเวลาจริงเสมอ (ไม่ใช้ dt ที่ถูกสโลว์โมชันแล้ว) กันค้างฉากนานเกินตั้งใจ
+    if (dramaCut.t >= D.holdTime) { dramaCut.phase = 'out'; dramaCut.t = 0; }
+    return D.slowMoScale;
+  }
+  // 'out': เลื่อนกลับที่เดิม
+  dramaCut.t += rawDt / D.easeTime;
+  const k = Math.min(1, dramaCut.t);
+  camera.position.lerpVectors(dramaCut.toPos, dramaCut.savedPos, dramaEase(k));
+  controls.target.lerpVectors(dramaCut.toTarget, dramaCut.savedTarget, dramaEase(k));
+  if (k >= 1) { controls.enabled = true; dramaCut = null; letterboxEl.classList.remove('show'); setTimeout(() => { if (!dramaCut) letterboxEl.classList.add('hidden'); }, 650); }
+  return 1;
+}
+
 // ---------- ลูปหลัก ----------
 let drumT = 1.5;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, clock.getDelta());
+  // ฉากดราม่า (ถ้ากำลังเล่นอยู่) ขับกล้องเอง + คืนตัวคูณความเร็ว "ฉาก" สำหรับแอนิเมชันภาพล้วน ๆ
+  // (ไม่แตะ dt ที่ป้อนเข้า simulation ด้านล่างเลย ผลศึกจึงเหมือนเดิมไม่ว่าจะสโลว์โมชันอยู่หรือไม่)
+  const cosmeticScale = updateDramaCut(dt);
+  const cdt = dt * cosmeticScale;
 
   if (battle && speed > 0) {
     simAccumulator += dt * speed;
@@ -847,14 +937,15 @@ renderer.setAnimationLoop(() => {
     }
   }
 
-  // กลองรบจังหวะสม่ำเสมอ
+  // กลองรบ: จังหวะเร่งขึ้นตามความเข้มของศึก (เมืองนอก → เมืองชั้นใน → ลานวัง)
   if (battle && !battle.ended && speed > 0) {
+    const intensity = siegeIntensity(battle.gate.open, battle.palace.progress > 0 || battle.palace.atk > 0);
     drumT -= dt * speed;
-    if (drumT <= 0) { drumT = 1.9; sfx.drum(); }
+    if (drumT <= 0) { drumT = DRUM_INTERVAL[intensity]; sfx.drum(intensity); }
   }
 
   // วงสีใต้เท้า + ป้ายจำนวนทหารเมือง (มุมทหาร = ปิดป้าย เพราะกล้องไม่ได้อิงจุดหมุนแล้ว)
-  if (battle) battle.updateOverlays(dt, unitViewSoldier ? 0 : camera.position.distanceTo(controls.target), camera);
+  if (battle) battle.updateOverlays(cdt, unitViewSoldier ? 0 : camera.position.distanceTo(controls.target), camera);
 
   // จอสั่น (offset ชั่วคราวรอบการเรนเดอร์)
   const shakeMag = battle ? battle.shake * 0.4 : 0;
@@ -879,8 +970,9 @@ renderer.setAnimationLoop(() => {
     }
   }
 
-  animateCityFlags(city.sides, dt);
-  if (!unitViewSoldier) { applyKeyboardPan(dt); updateCameraTween(camera, controls, dt); }
+  animateCityFlags(city.sides, cdt);
+  if (!unitViewSoldier && !dramaCut) applyKeyboardPan(dt);
+  if (!unitViewSoldier) updateCameraTween(camera, controls, dt);
   const hiddenFollowMesh = unitViewSoldier?.mesh;
   if (hiddenFollowMesh) hiddenFollowMesh.visible = false;
   renderer.render(scene, camera);
