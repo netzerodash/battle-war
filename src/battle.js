@@ -298,20 +298,10 @@ export class Battle {
       + this.reserves.aliveCount() + this.garrison.aliveCount();
     this.stats.defendersTotal = this.stats.defendersInitial;
 
-    for (const c of this.companies) {
-      const ring = new THREE.Mesh(c.ctype === 'cav' || c.ctype === 'ram' ? ringGeoBig : ringGeo, ringMatSel);
-      ring.rotation.x = -Math.PI / 2;
-      ring.visible = false;
-      this.group.add(ring);
-      c.selRing = ring;
-      const hpBack = new THREE.Sprite(HP_BACK_MAT);
-      const hpFront = new THREE.Sprite(HP_FRONT_MAT);
-      hpBack.scale.set(4.4, 0.42, 1);
-      hpFront.scale.set(4, 0.24, 1);
-      hpBack.visible = hpFront.visible = false;
-      this.group.add(hpBack, hpFront);
-      c.healthBar = { back: hpBack, front: hpFront };
-    }
+    for (const c of this.companies) this.setupCompanyVisuals(c);
+    // ท่าแม่ทัพ: คูลดาวน์แตรรวมพล + สิทธิ์เรียกกองหนุน (ได้เพิ่มทุกครั้งที่ยึดกำแพงนอกได้อีกด้าน)
+    this.abilities = { hornCd: 0, reinforceCharges: 0 };
+    this.hornBuffed = new Set();
     // ตัวช่วยมองเห็นทหารเมือง: วงสีใต้เท้า + ป้ายจำนวนต่อกลุ่ม (อัปเดตจาก main ทุกเฟรม แม้หยุดเกม)
     this.defMarkers = new DefenderMarkers(this.group);
     this.defLabels = new DefenderGroupLabels(this.group);
@@ -321,6 +311,88 @@ export class Battle {
     this.hoverRing.rotation.x = -Math.PI / 2;
     this.hoverRing.visible = false;
     this.group.add(this.hoverRing);
+  }
+
+  // สร้างวงเลือก + หลอดเลือดของกองร้อยหนึ่งกอง — แยกจาก constructor เพื่อให้กองหนุนที่เกิดกลางศึก
+  // (เช่นจากท่ากองหนุน) เลือก สั่ง และแสดงหลอดเลือดได้เหมือนกองที่ตั้งทัพมาตั้งแต่ต้นทุกประการ
+  setupCompanyVisuals(c) {
+    const ring = new THREE.Mesh(c.ctype === 'cav' || c.ctype === 'ram' ? ringGeoBig : ringGeo, ringMatSel);
+    ring.rotation.x = -Math.PI / 2;
+    ring.visible = false;
+    this.group.add(ring);
+    c.selRing = ring;
+    const hpBack = new THREE.Sprite(HP_BACK_MAT);
+    const hpFront = new THREE.Sprite(HP_FRONT_MAT);
+    hpBack.scale.set(4.4, 0.42, 1);
+    hpFront.scale.set(4, 0.24, 1);
+    hpBack.visible = hpFront.visible = false;
+    this.group.add(hpBack, hpFront);
+    c.healthBar = { back: hpBack, front: hpFront };
+  }
+
+  // ---------- ท่าแม่ทัพระหว่างศึก ----------
+  // 📯 แตรรวมพล: กองที่เลือกเดินเร็วขึ้น/ตีถี่ขึ้นชั่วคราว — ปรับ speed/atkCd ตรง ๆ แล้วคืนค่าเดิมเมื่อหมดเวลา
+  // (เก็บค่าตั้งต้นไว้ที่ _hornBase กันไม่ให้ซ้อนบัฟถ้าใช้ซ้ำก่อนหมดเวลาเดิม)
+  useHornRally() {
+    if (this.abilities.hornCd > 0 || this.selection.size === 0) return false;
+    const H = CFG.commander.horn;
+    let n = 0;
+    for (const c of this.selection) {
+      for (const s of c.aliveSoldiers) {
+        if (!s._hornBase) s._hornBase = { speed: s.speed, atkCd: s.atkCd };
+        s.speed = s._hornBase.speed * H.speedMul;
+        s.atkCd = s._hornBase.atkCd * H.atkCdMul;
+        s.hornT = H.duration;
+        this.hornBuffed.add(s);
+        n++;
+      }
+    }
+    this.abilities.hornCd = H.cooldown;
+    this.onEvent('ability_horn', { n });
+    return true;
+  }
+
+  updateHornBuff(dt) {
+    if (this.abilities.hornCd > 0) this.abilities.hornCd = Math.max(0, this.abilities.hornCd - dt);
+    if (!this.hornBuffed.size) return;
+    for (const s of [...this.hornBuffed]) {
+      if (s.alive) s.hornT -= dt;
+      if (!s.alive || s.hornT <= 0) {
+        if (s._hornBase) { s.speed = s._hornBase.speed; s.atkCd = s._hornBase.atkCd; s._hornBase = null; }
+        this.hornBuffed.delete(s);
+      }
+    }
+  }
+
+  // 🐎 กองหนุน: ต้องยึดกำแพงนอกได้อย่างน้อยหนึ่งด้านก่อนถึงมีสิทธิ์ (เพิ่มสิทธิ์ทุกครั้งที่ยึดด้านใหม่ได้ ดู updateCapture)
+  // เกิดที่ลานรวมพลกลางเมืองชั้นนอกทันที เข้าสู่ระบบไล่ล่าในเมืองแบบเดียวกับทหารที่ลงจากกำแพงมาเอง
+  useReinforcementWave() {
+    if (this.abilities.reinforceCharges <= 0) return false;
+    this.abilities.reinforceCharges--;
+    const R = CFG.commander.reinforce;
+    const spawn = cityRallyPoint();
+    let n = 0, companies = 0;
+    const types = [...Array(R.composition.spear).fill('spear'), ...Array(R.composition.shield).fill('shield')];
+    types.forEach((ctype, i) => {
+      const anchor = spawn.clone().add(new THREE.Vector3((i - (types.length - 1) / 2) * 4, 0, 0));
+      const c = new Company(this.companies.length, 2, ctype, anchor, this);
+      this.setupCompanyVisuals(c);
+      c.mode = 'city';
+      c.state = 'done';
+      for (const s of c.soldiers) {
+        s.pos.copy(anchor).add(new THREE.Vector3((this.rng() - 0.5) * 3, 0, (this.rng() - 0.5) * 3));
+        s.zone = 'city';
+        s.state = 'order';
+        s.intent = 'reinforcement-wave';
+        this.cityAttackers.add(s);
+        n++;
+      }
+      this.companies.push(c);
+      companies++;
+    });
+    this.stats.deployedTotal += n;
+    this.onEvent('ability_reinforce', { n, companies, chargesLeft: this.abilities.reinforceCharges });
+    return true;
   }
 
   // ---------- คำสั่งจากแม่ทัพ ----------
@@ -1034,6 +1106,7 @@ export class Battle {
     this.refreshWallDefenders();
     this.rebuildMovementGrid();
     this.updateFeintHeat(dt);
+    this.updateHornBuff(dt);
 
     for (const d of this.defenses) d.update(dt);
     this.reserves.update(dt);
@@ -1157,9 +1230,23 @@ export class Battle {
         pushZ += (dz / d) * strength;
       }
     }
+    // ฝูงชนแน่นมาก (เช่น หลายกองมุ่งจุดเดียวผ่านช่องประตูแคบพร้อมกัน) แรงผลักสะสมจากเพื่อนรอบข้าง
+    // จำนวนมากอาจรวมกันเกิน 1 และหักล้างทิศทางเดินจนเหลือศูนย์พอดี — ต้องจำกัดเพดานแรงผลักไว้ก่อน
+    // ไม่งั้นทหารจะ "ตัวแข็ง" ค้างสนิท (moving=false ตลอดไป) เพราะแรงสองฝั่งเท่ากันพอดีทุกเฟรม ไม่ขยับแม้แต่มิลลิเมตรเดียว
+    const pushLen = Math.hypot(pushX, pushZ);
+    const pushCap = 1.35;
+    if (pushLen > pushCap) { const k = pushCap / pushLen; pushX *= k; pushZ *= k; }
     _t1.x += pushX * CFG.movement.separationStrength * chokeScale;
     _t1.z += pushZ * CFG.movement.separationStrength * chokeScale;
-    if (_t1.lengthSq() < 0.001) { s.moving = false; return false; }
+    if (_t1.lengthSq() < 0.001) {
+      // ทิศเดินกับแรงผลักหักล้างกันพอดี — แทนที่จะยืนนิ่งค้างตลอดไป ให้แซงด้านข้างแทน โดยเลือกฝั่งจาก
+      // id ของทหารเอง (คงที่ต่อตัว) กันไม่ให้ทุกคนแซงทางเดียวกันแล้วมาชนกันใหม่ในเฟรมถัดไป
+      _t1.subVectors(target, s.pos).setY(0).normalize();
+      const side = s.id % 2 === 0 ? 1 : -1;
+      _t2.set(-_t1.z, 0, _t1.x).multiplyScalar(side * 0.5).add(_t1);
+      _t1.copy(_t2);
+      if (_t1.lengthSq() < 0.001) { s.moving = false; return false; }
+    }
     _t1.normalize();
     _t2.copy(s.pos).addScaledVector(_t1, Math.max(3, distance));
     s.stepToward(dt, _t2, speed, 0.05);
@@ -2113,6 +2200,8 @@ export class Battle {
           this.spawnSpark(sectionCenter(s), 'gold', 10, 4);
           this.shake = Math.max(this.shake, 0.7);
           this.onEvent('captured', { side: s });
+          this.abilities.reinforceCharges = Math.min(4, this.abilities.reinforceCharges + 1);
+          this.onEvent('reinforce_charge_earned', { total: this.abilities.reinforceCharges });
           this.rearmArchersAfterCapture(s);
           this.captureDirective[s] = 'pending';
           this.captureDecisionAt[s] = this.time;

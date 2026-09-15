@@ -20,6 +20,7 @@ import { DefenseSide, ReserveForce, Garrison } from '../src/defense.js';
 import { chooseTacticalTarget, targetScore } from '../src/tactical-ai.js';
 import { BATTLEFIELD_CLEAR_RADIUS, mountainSpec } from '../src/scene.js';
 import { Company } from '../src/company.js';
+import { Soldier } from '../src/soldier.js';
 
 test('victory comes from holding the innermost palace courtyard, not from wiping out the city', () => {
   const base = { attackersAlive: 10, time: 10, timeLimit: 20 };
@@ -357,6 +358,29 @@ test('spatial hash only returns nearby units', () => {
   const far = { alive: true, pos: new THREE.Vector3(30, 0, 30) };
   hash.rebuild([near, far]);
   assert.deepEqual(hash.query(new THREE.Vector3(), 4), [near]);
+});
+
+test('a unit squeezed by a dense crowd edges forward instead of freezing solid forever', () => {
+  // เดิม: แรงผลักสะสมจากเพื่อนรอบข้างไม่มีเพดาน — ฝูงชนแน่นมาก (เช่น หลายกองมุ่งจุดเดียวผ่านประตูแคบพร้อมกัน)
+  // หักล้างทิศทางเดินจนเหลือศูนย์พอดี ทหารจะ "ตัวแข็ง" ค้างสนิทตลอดไป (moving=false ทุกเฟรม ไม่ขยับแม้แต่มิลลิเมตรเดียว)
+  // นี่คือสาเหตุจริงที่ทัพเข้าเมืองไม่ได้เมื่อรวมหลายกองสั่งไปจุดเดียวกันผ่านคอขวดประตูชั้นใน
+  const s = new Soldier({ type: 'atk', faction: 'atk', side: 0, hp: 6, speed: 3, atkCd: 1, dmg: 1 });
+  s.zone = 'city';
+  const target = new THREE.Vector3(0, 0, 10); // มุ่งไป +z
+  // เพื่อนบ้านแน่นเบียดอยู่ด้านหน้าตรง ๆ (ทิศเดียวกับที่ s กำลังจะเดินไป) — แรงผลักรวมจึงชี้ทาง -z ตรงข้ามพอดี
+  const packed = Array.from({ length: 12 }, (_, i) => ({
+    id: 100 + i, alive: true, faction: 'atk', zone: 'city',
+    kind: 'inf', pos: new THREE.Vector3((i % 2 ? 1 : -1) * 0.05, 0, 0.15 + i * 0.02),
+  }));
+  const battle = {
+    _nearby: [],
+    movementGrid: { query: (pos, radius, out) => { out.length = 0; out.push(...packed); return out; } },
+    nearGateOrStair: () => false,
+  };
+  const start = s.pos.clone();
+  for (let i = 0; i < 40; i++) Battle.prototype.stepGroundUnit.call(battle, s, 1 / 30, target, 3, 0.35);
+  assert.ok(s.pos.distanceTo(start) > 0.05, 'a packed crowd must never leave a unit permanently frozen in place');
+  assert.ok(Number.isFinite(s.pos.x) && Number.isFinite(s.pos.z), 'the escape nudge must not blow up position to NaN/Infinity');
 });
 
 test('engagement registry enforces frontage and releases dead targets', () => {
@@ -759,6 +783,45 @@ test('inner guards always counter-attack a small straggler group even after taki
   };
   garrison.think();
   assert.ok(survivors.every((s) => s.intent === 'counter-attack'), 'a small group must always be hunted, regardless of how depleted the garrison is');
+});
+
+test('horn rally speeds up and sharpens the selected companies, then reverts exactly after its duration', () => {
+  const battle = {
+    abilities: { hornCd: 0 }, hornBuffed: new Set(), selection: new Set(), onEvent() {},
+  };
+  const company = { aliveSoldiers: [new Soldier({ type: 'atk', faction: 'atk', side: 0, hp: 6, speed: 3, atkCd: 1, dmg: 1 })] };
+  const s = company.aliveSoldiers[0];
+  battle.selection.add(company);
+  assert.equal(Battle.prototype.useHornRally.call(battle), true);
+  assert.ok(s.speed > 3 && s.atkCd < 1, 'a rallied soldier should move and attack faster while the horn is active');
+  assert.ok(battle.abilities.hornCd > 0, 'using the horn should start its cooldown');
+  assert.equal(Battle.prototype.useHornRally.call(battle), false, 'the horn cannot be blown again during its own cooldown');
+  Battle.prototype.updateHornBuff.call(battle, CFG.commander.horn.duration + 1);
+  assert.equal(s.speed, 3, 'speed must return to exactly its original value once the buff expires');
+  assert.equal(s.atkCd, 1, 'attack cooldown must return to exactly its original value once the buff expires');
+  assert.equal(battle.hornBuffed.size, 0, 'the expired soldier should be dropped from tracking');
+});
+
+test('a reinforcement wave only arrives once a wall side has actually been captured', () => {
+  const events = [];
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), companies: [], cityAttackers: new Set(),
+    stats: { deployedTotal: 100 }, abilities: { reinforceCharges: 0 },
+    setupCompanyVisuals() {}, onEvent: (t, d) => events.push([t, d]),
+  };
+  assert.equal(Battle.prototype.useReinforcementWave.call(battle), false, 'no charge earned yet — nothing should spawn');
+  assert.equal(battle.companies.length, 0);
+
+  battle.abilities.reinforceCharges = 1;
+  assert.equal(Battle.prototype.useReinforcementWave.call(battle), true);
+  const total = CFG.commander.reinforce.composition.spear + CFG.commander.reinforce.composition.shield;
+  assert.equal(battle.companies.length, total, 'one company per unit in the reinforcement composition');
+  const menExpected = total * CFG.commander.reinforce.squadSize;
+  assert.equal(battle.stats.deployedTotal, 100 + menExpected, 'reinforcements must count toward the deployed total for fair survival stats');
+  assert.equal(battle.cityAttackers.size, menExpected, 'every reinforcement soldier enters the city already fighting, like troops who descended from a captured wall');
+  for (const c of battle.companies) for (const s of c.soldiers) assert.equal(s.zone, 'city');
+  assert.equal(battle.abilities.reinforceCharges, 0, 'the charge is spent');
+  assert.equal(Battle.prototype.useReinforcementWave.call(battle), false, 'no second wave without a second captured wall');
 });
 
 test('routes into the palace pass every gate in order and stop at the first closed one', () => {

@@ -339,6 +339,9 @@ function onBattleEvent(type, data) {
     case 'evacuate': UI.toast(`🏰 ฝ่ายเมืองสละกำแพงด้าน${SIDE_NAMES[data.side]} ลงมารวมพลขั้นสุดท้าย!`); sfx.hornLow(); break;
     case 'oil_poured': if (data.hit > 0) UI.toast(`🔥 น้ำมันเดือดราดหน้า${GATE_NAMES[data.ring]} — โดน ${data.hit} นาย (เหลือ ${data.potsLeft} หม้อ)`, 'bad'); break;
     case 'group_saved': UI.toast(`บันทึกกลุ่ม ${data.n}: ${data.count} กอง — กด ${data.n} เพื่อเรียก`, 'good'); break;
+    case 'ability_horn': UI.toast(`📯 แตรรวมพล! กองที่เลือก ${data.n} นาย เดินเร็วขึ้น/ตีถี่ขึ้น 10 วิ`, 'good'); sfx.horn(); break;
+    case 'ability_reinforce': UI.toast(`🐎 กองหนุนมาถึงแล้ว! ${data.companies} กอง (${data.n} นาย) เข้าเมืองทันที — เหลือสิทธิ์เรียกอีก ${data.chargesLeft} ครั้ง`, 'big blue'); sfx.cheer(); break;
+    case 'reinforce_charge_earned': UI.toast(`🐎 ได้สิทธิ์เรียกกองหนุนแล้ว (${data.total}) — กด X เพื่อเรียก`, 'good'); break;
     case 'end': UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
   }
 }
@@ -495,6 +498,32 @@ document.querySelectorAll('[data-capture-action]').forEach((button) => {
   };
 });
 
+// ---------- ท่าแม่ทัพ: แถบมุมขวาล่าง ----------
+const abilityHornBtn = document.getElementById('ability-horn');
+const abilityReinforceBtn = document.getElementById('ability-reinforce');
+abilityHornBtn.onclick = () => {
+  if (!battle) return;
+  if (!battle.useHornRally()) UI.toast(battle.abilities.hornCd > 0 ? `📯 แตรรวมพลยังไม่พร้อม อีก ${Math.ceil(battle.abilities.hornCd)} วิ` : '📯 เลือกกองก่อนถึงจะเป่าแตรได้', 'bad');
+};
+abilityReinforceBtn.onclick = () => {
+  if (!battle) return;
+  if (!battle.useReinforcementWave()) UI.toast('🐎 ยังไม่มีสิทธิ์เรียกกองหนุน — ยึดกำแพงนอกได้ 1 ด้านก่อน', 'bad');
+};
+function updateAbilityBar() {
+  if (!battle) return;
+  const H = CFG.commander.horn;
+  const cd = battle.abilities.hornCd;
+  abilityHornBtn.classList.toggle('cooling', cd > 0);
+  abilityHornBtn.disabled = cd > 0 || battle.selection.size === 0;
+  abilityHornBtn.querySelector('.cd-num').textContent = cd > 0 ? Math.ceil(cd) : '';
+  const ring = abilityHornBtn.querySelector('.cd-ring circle');
+  ring.style.strokeDashoffset = String(100.5 * (1 - cd / H.cooldown));
+  const charges = battle.abilities.reinforceCharges;
+  abilityReinforceBtn.classList.toggle('no-charge', charges === 0);
+  abilityReinforceBtn.disabled = charges === 0;
+  abilityReinforceBtn.querySelector('.charge-num').textContent = String(charges);
+}
+
 function setSpeedUI() {
   document.querySelectorAll('.hud-speed .spd[data-speed]').forEach((b) => {
     b.classList.toggle('active', +b.dataset.speed === speed);
@@ -536,6 +565,16 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Period') {
     const n = battle.selectIdleCompanies();
     UI.toast(n ? `เลือกกองที่ว่างงาน ${n} กอง` : 'ไม่มีกองที่ว่างงาน', n ? '' : 'bad');
+    return;
+  }
+  if (e.code === 'KeyZ' && !e.ctrlKey && !e.metaKey) {
+    if (!battle.useHornRally()) {
+      UI.toast(battle.abilities.hornCd > 0 ? `📯 แตรรวมพลยังไม่พร้อม อีก ${Math.ceil(battle.abilities.hornCd)} วิ` : '📯 เลือกกองก่อนถึงจะเป่าแตรได้', 'bad');
+    }
+    return;
+  }
+  if (e.code === 'KeyX' && !e.ctrlKey && !e.metaKey) {
+    if (!battle.useReinforcementWave()) UI.toast('🐎 ยังไม่มีสิทธิ์เรียกกองหนุน — ยึดกำแพงนอกได้ 1 ด้านก่อน', 'bad');
     return;
   }
   if (e.key === '0') focusWide();
@@ -728,6 +767,7 @@ renderer.setAnimationLoop(() => {
       hudTimer = 0;
       UI.updateHUD(hudEls, battle, pendingCaptureSide);
       UI.renderGroupBar(groupBar, battle.controlGroupSummary(), battle.selection.size > 0);
+      updateAbilityBar();
       minimap.draw(battle, viewCorners());
       const hoverC = pickCompany(mousePos.x, mousePos.y, 26);
       battle.setHover(hoverC);

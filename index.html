@@ -48,6 +48,13 @@
       </div>
       <p class="tut-hint">ดูคำสั่งทั้งหมด กด <kbd class="inline">?</kbd> ได้ทุกเมื่อระหว่างเล่น</p>
 
+      <div class="tut-section-label">ท่าแม่ทัพระหว่างศึก</div>
+      <div class="control-grid">
+        <div class="ctl"><kbd>Z</kbd><span>📯 แตรรวมพล — เดินเร็ว/ตีถี่ขึ้น 10 วิ</span></div>
+        <div class="ctl"><kbd>X</kbd><span>🐎 กองหนุน — ยึดกำแพงนอกได้ก่อนถึงใช้ได้</span></div>
+      </div>
+      <p class="tut-hint">มุมขวาล่างของจอระหว่างเล่นมีปุ่มให้กดตรง ๆ เหมือนกัน</p>
+
       <div class="tut-section-label">ระดับความยาก</div>
       <fieldset class="difficulty" aria-label="ระดับความยาก">
         <label for="diff-easy"><input type="radio" name="difficulty" value="easy" id="diff-easy"><span class="diff-ic">🌱</span><span class="diff-text"><b>ง่าย</b><small>เมืองเปราะกว่า · 18 นาที</small></span></label>
@@ -91,6 +98,17 @@
       <button id="btn-minimap" class="btn mini-toggle" title="พับ/กางแผนที่ย่อ">▾</button>
     </div>
     <div id="group-bar" class="group-bar" aria-label="กลุ่มกอง"></div>
+    <div id="ability-bar" class="ability-bar" aria-label="ท่าแม่ทัพ">
+      <button id="ability-horn" class="ability-slot" title="📯 แตรรวมพล (Z) — กองที่เลือกเดินเร็วขึ้น 35% และตีถี่ขึ้น 10 วิ · คูลดาวน์ 60 วิ">
+        <kbd>Z</kbd><span class="ic">📯</span><span class="nm">แตรรวมพล</span>
+        <svg class="cd-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16"></circle></svg>
+        <b class="cd-num"></b>
+      </button>
+      <button id="ability-reinforce" class="ability-slot" title="🐎 กองหนุน (X) — ยึดกำแพงนอกได้ 1 ด้าน = ได้กองหนุน 1 ระลอก (หอก 4 + โล่ 2 กอง) เข้าเมืองทันที">
+        <kbd>X</kbd><span class="ic">🐎</span><span class="nm">กองหนุน</span>
+        <b class="charge-num">0</b>
+      </button>
+    </div>
 
     <div id="cmd-bar" class="cmd-bar hidden">
       <div class="cmd-info">
@@ -205,6 +223,8 @@
         <div class="ctl"><kbd>เลข 1–9</kbd><span>เรียกกลุ่ม (Shift เพิ่ม)</span></div>
         <div class="ctl"><kbd>Q</kbd><span>ทหารราบในเมืองทั้งหมด</span></div>
         <div class="ctl"><kbd>.</kbd><span>กองที่ว่างงาน</span></div>
+        <div class="ctl"><kbd>Z</kbd><span>📯 แตรรวมพล</span></div>
+        <div class="ctl"><kbd>X</kbd><span>🐎 เรียกกองหนุน</span></div>
         <div class="ctl"><kbd>F1–F4 / F5</kbd><span>มุมด้าน / ลานวัง</span></div>
         <div class="ctl"><kbd>0 · Space</kbd><span>มุมกว้าง · หยุด/เล่น</span></div>
         <div class="ctl"><kbd>H · Esc</kbd><span>ซ่อน HUD · ยกเลิกเลือก</span></div>
