@@ -113,11 +113,13 @@ export function sectionOf(pos) {
 export const sectionCenter = (side) => worldPoint(side, 0, CFG.wallHalf + CFG.wallThick / 2, CFG.walkY);
 
 // จุดบันไดภายในประจำด้าน (ไว้ลงจากกำแพง / กองสำรองขึ้นเสริม)
+// ทางขึ้นกำแพงแบบม้าเดิน (马道): ช่วงลาดทอดเลียบหน้าในของกำแพงทั้งเส้น ไม่แทงเข้าเนื้อกำแพง
+// แล้วมีชานพักเชื่อมจากหัวบันไดข้ามช่องเว้นใบกำแพงด้านใน ขึ้นสู่ทางเดินบนกำแพง
 export function stairPoints(side) {
   return {
-    // เกาะขอบในของกำแพงแล้วทอดยาวตามแนวกำแพง ไม่พุ่งกินลานเมือง
-    base: worldPoint(side, -17, CFG.wallHalf - 4, 0),
-    top: worldPoint(side, 17, CFG.wallHalf + 1.2, CFG.walkY),
+    base: worldPoint(side, -17, CFG.wallHalf - 2.1, 0),
+    top: worldPoint(side, 17, CFG.wallHalf - 2.1, CFG.walkY),
+    landing: worldPoint(side, 19.5, CFG.wallHalf + 1.3, CFG.walkY),
   };
 }
 

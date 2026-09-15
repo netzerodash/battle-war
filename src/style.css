@@ -278,3 +278,7 @@ body:not(.touch) #touchbar { display: none !important; }
   .end-stats { font-size: 12px; line-height: 1.7; }
   .btn.tb { width: 40px; height: 38px; font-size: 15px; }
 }
+
+/* สีฝ่ายเมืองในคำอธิบาย (ตรงกับวงใต้เท้าในฉาก) */
+.dot.blue { background: #2f7dff; }
+.dot.violet { background: #a66bff; }

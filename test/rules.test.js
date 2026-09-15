@@ -227,17 +227,61 @@ test('opened inner gates leave a clear passage through each inner ring', () => {
   }
 });
 
-test('inner stairs have a walkable slope instead of a near-vertical ramp', () => {
+test('inner stairs run beside the inner wall face and land on the wall walk', () => {
   for (let side = 0; side < 4; side++) {
-    const { base, top } = stairPoints(side);
+    const { base, top, landing } = stairPoints(side);
     const rise = top.y - base.y;
     const run = Math.hypot(top.x - base.x, top.z - base.z);
     assert.ok(Math.atan2(rise, run) < Math.PI / 4);
     const v = SIDE_VECS[side];
+    for (let k = 0; k <= 20; k++) {
+      const p = base.clone().lerp(top, k / 20);
+      assert.ok(v.n.dot(p) + 2 <= CFG.wallHalf, 'stair flight (4 m wide) cuts into the wall body');
+    }
+    assert.equal(top.y, CFG.walkY);
+    assert.equal(landing.y, CFG.walkY);
+    assert.ok(v.n.dot(landing) >= CFG.wallHalf + 0.8 && v.n.dot(landing) <= CFG.wallHalf + CFG.wallThick - 0.8);
     const delta = top.clone().sub(base);
-    assert.ok(v.n.dot(top) >= CFG.wallHalf + 0.8 && v.n.dot(top) <= CFG.wallHalf + 1.6);
-    assert.ok(v.n.dot(base) <= CFG.wallHalf - 3.5);
     assert.ok(Math.abs(v.t.dot(delta)) > Math.abs(v.n.dot(delta)) * 5.5);
+  }
+});
+
+test('siege ladders lean on the outer wall face and rise above the battlements', () => {
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), gate: { open: false }, time: 0, nextLadderId: 0,
+    wallThreats: () => [0, 0, 0, 0], assignPlantSlot: () => 10, onEvent() {},
+  };
+  const company = new Company(0, 2, 'spear', new THREE.Vector3(0, 0, 130), battle);
+  assert.equal(company.orderAssault(2), true);
+  const { base, top, len } = company.ladder;
+  const n = SIDE_VECS[2].n;
+  const face = CFG.wallHalf + CFG.wallThick;
+  assert.ok(top.y > CFG.wallH + 1.5, 'ladder top should clear the battlements');
+  for (let k = 0; k <= 40; k++) {
+    assert.ok(n.dot(base.clone().lerp(top, k / 40)) > face, 'ladder passes through the wall');
+  }
+  const angle = Math.atan2(top.y - base.y, n.dot(base) - n.dot(top));
+  assert.ok(angle > 1.2 && angle < 1.4, 'ladder should lean at a climbable 70-80 degrees');
+  assert.ok(Math.abs(len - base.distanceTo(top)) < 1e-6, 'ladder mesh must not overshoot into the wall');
+});
+
+test('escalade ladders lean on inner walls without entering the wall or its tiled roof', () => {
+  for (let ring = 1; ring < RINGS.length; ring++) {
+    const battle = {
+      rng: () => 0.5, group: new THREE.Group(), gate: { open: true }, time: 0,
+      wallThreats: () => [0, 0, 0, 0], gatesOpen: () => [true, true, false], onEvent() {},
+    };
+    const R = RINGS[ring];
+    const start = ring === 1 ? cityRallyPoint() : new THREE.Vector3(0, 0, 30);
+    const company = new Company(0, 2, 'spear', start, battle);
+    for (const s of company.soldiers) s.zone = ring === 1 ? 'city' : 'inner';
+    assert.equal(company.orderEscalade(ring, new THREE.Vector3(10, 0, R.half + R.thick / 2)), true);
+    const { foot, top } = company.escalade;
+    const n = SIDE_VECS[2].n;
+    assert.ok(top.y > R.h + 0.45, `ring ${ring} ladder should reach over the wall top`);
+    for (let k = 0; k <= 40; k++) {
+      assert.ok(n.dot(foot.clone().lerp(top, k / 40)) >= R.half + R.thick + 0.45, `ring ${ring} ladder clips the wall or roof tiles`);
+    }
   }
 });
 
@@ -780,4 +824,34 @@ test('inner garrisons deploy inside their own ring with archers on the inner wal
   assert.ok(garrison.soldiers.some((s) => s.utype === 'guardCav' && s.kind === 'cav'));
   assert.ok(garrison.soldiers.some((s) => s.utype === 'guardShield'));
   assert.ok(garrison.archers.every((a) => a.zone === 'wall2' || a.zone === 'wall3'));
+});
+
+test('city defenders get team-coloured ground markers by role, sized up when zoomed out', async () => {
+  const { DefenderMarkers, markerKindOf, markerScaleForDistance } = await import('../src/markers.js');
+  assert.equal(markerKindOf({ utype: 'def' }), 'melee');
+  assert.equal(markerKindOf({ utype: 'guardArcher' }), 'archer');
+  assert.equal(markerKindOf({ utype: 'carrier' }), 'worker');
+  assert.equal(markerKindOf({ utype: 'guardCav' }), 'guard');
+  assert.ok(markerScaleForDistance(300) > markerScaleForDistance(60));
+  const markers = new DefenderMarkers(new THREE.Group(), 10);
+  const unit = (alive) => ({ alive, utype: 'def', kind: 'inf', pos: new THREE.Vector3(1, 0, 2) });
+  assert.equal(markers.update([unit(true), unit(false), unit(true)], 1), 2);
+  assert.equal(markers.mesh.count, 2);
+});
+
+test('defender count labels group soldiers by where they really stand', () => {
+  const unit = (zone, x, z, y = 0) => ({ alive: true, zone, stair: null, pos: new THREE.Vector3(x, y, z) });
+  const battle = {
+    defenses: [{ melee: [unit('wall', 0, CFG.wallHalf + 4, CFG.walkY), unit('wall', 5, CFG.wallHalf + 4, CFG.walkY)], archers: [], carriers: [] }],
+    reserves: { squads: [{ soldiers: [unit('city', 0, CFG.wallHalf - 10)] }] },
+    garrison: { soldiers: [unit('palace', 0, 2), unit('inner', 30, 0)], archers: [unit('wall3', 0, -20, 7)] },
+    sally: { horses: [] },
+    defenderUnits: Battle.prototype.defenderUnits,
+  };
+  const groups = Object.fromEntries(Battle.prototype.defenderGroups.call(battle).map((g) => [g.key, g]));
+  assert.equal(groups.wall2.count, 2);
+  assert.equal(groups.city2.count, 1);
+  assert.equal(groups.palace.count, 2, 'palace guards and palace-wall archers share the palace label');
+  assert.equal(groups.inner1.count, 1);
+  assert.equal(groups.wall2.y, CFG.walkY);
 });

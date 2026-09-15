@@ -15,6 +15,15 @@ const UP = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3();
 let nextCompanyId = 1;
 
+// บันไดพาดเอนชนหน้ากำแพงด้านนอก ปลายโผล่พ้นใบเสมา — ไม่แทงเข้าเนื้อกำแพงหรือทะลุพื้นทางเดิน
+function siegeLadderEnds(side, plantT) {
+  const face = CFG.wallHalf + CFG.wallThick;
+  return {
+    base: worldPoint(side, plantT, face + CFG.ladder.baseDist, 0),
+    top: worldPoint(side, plantT, face + CFG.ladder.topOut, CFG.walkY + CFG.ladder.topRise),
+  };
+}
+
 // กองร้อยหนึ่งหน่วย — มี 4 ประเภท: spear(หอกปีน) / shield(โล่กำบัง) / archer(ธนูกดกำแพง) / ram(รถทุบประตู) + cav
 export class Company {
   constructor(idx, side, ctype, spawnAnchor, battle) {
@@ -176,9 +185,8 @@ export class Company {
   }
 
   buildLadder(assaultSide, plantT) {
-    const base = worldPoint(assaultSide, plantT, CFG.wallHalf + CFG.wallThick + CFG.ladder.baseDist, 0);
-    const top = worldPoint(assaultSide, plantT, CFG.wallHalf + CFG.wallThick - 0.4, CFG.walkY);
-    const len = base.distanceTo(top) + 0.5;
+    const { base, top } = siegeLadderEnds(assaultSide, plantT);
+    const len = base.distanceTo(top);
     const mesh = makeLadder(len);
     mesh.visible = false;
     this.battle.group.add(mesh);
@@ -191,8 +199,9 @@ export class Company {
 
   resetLadderTo(assaultSide, plantT) {
     const l = this.ladder;
-    l.base.copy(worldPoint(assaultSide, plantT, CFG.wallHalf + CFG.wallThick + CFG.ladder.baseDist, 0));
-    l.top.copy(worldPoint(assaultSide, plantT, CFG.wallHalf + CFG.wallThick - 0.4, CFG.walkY));
+    const ends = siegeLadderEnds(assaultSide, plantT);
+    l.base.copy(ends.base);
+    l.top.copy(ends.top);
     l.dir.copy(l.top).sub(l.base).normalize();
     l.planted = false; l.broken = false;
   }
@@ -428,7 +437,10 @@ export class Company {
     const side = sectionOf(point);
     let t = clamp(SIDE_VECS[side].t.dot(point), -(R.half - 2), R.half - 2);
     if (side === 2 && Math.abs(t) < gateHalfWidth(ring) + 3) t = (t < 0 ? -1 : 1) * (gateHalfWidth(ring) + 3);
-    const base = worldPoint(side, t, R.half + R.thick + 1.8, 0);
+    // พาดเอนชนขอบหลังคากระเบื้องที่ยื่นพ้นหน้ากำแพง 0.45 ม. ปลายโผล่พ้นสันกำแพง มุมเอียงราว 75°
+    const face = R.half + R.thick;
+    const topOut = 0.6, topY = R.h + 1.1, run = topY / 3.8;
+    const base = worldPoint(side, t, face + topOut + run + 1.0, 0);
     const route = routeBetween(start, base, this.routeThreats(), this.gatesOpen());
     if (route.blockedAt !== undefined) return false; // ยังเข้าไม่ถึงลานหน้ากำแพงชั้นนั้น
     this.cancelEscalade();
@@ -437,8 +449,8 @@ export class Company {
     this.mode = 'escalade';
     this.escalade = {
       ring, side, t, base,
-      foot: worldPoint(side, t, R.half + R.thick + 0.6, 0),
-      top: worldPoint(side, t, R.half + R.thick / 2, R.h + 0.5),
+      foot: worldPoint(side, t, face + topOut + run, 0),
+      top: worldPoint(side, t, face + topOut, topY),
       landing: worldPoint(side, t, R.half - 1.8, 0),
       climbers: new Set(), mesh: null, planted: false, len: 0, dir: null,
     };
@@ -461,7 +473,7 @@ export class Company {
     this.stateT = 0;
     e.len = e.foot.distanceTo(e.top);
     e.dir = e.top.clone().sub(e.foot).normalize();
-    e.mesh = makeLadder(e.len + 0.4);
+    e.mesh = makeLadder(e.len);
     e.mesh.position.copy(e.foot);
     e.mesh.quaternion.setFromUnitVectors(UP, e.dir);
     e.mesh.visible = false;

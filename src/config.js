@@ -60,7 +60,8 @@ export const CFG = {
     telegraph: 1.0, killRadius: 1.2, killChance: 0.42,
     speed0: 7, accel: 10, baseKillRadius: 2.3,
   },
-  ladder: { baseDist: 3.2, maxClimbers: 4, plantTime: 1.6, breakChance: 0.18, replantTime: 4.0 },
+  // บันไดพาด: โคนห่างหน้ากำแพง baseDist, ปลายเอนชนหน้ากำแพง (ยื่นพ้น topOut) โผล่เหนือทางเดิน topRise
+  ladder: { baseDist: 4.3, topOut: 0.15, topRise: 1.4, maxClimbers: 4, plantTime: 1.6, breakChance: 0.18, replantTime: 4.0 },
   arrow: { dmg: 1, spread: 0.7, dmgWall: 2 }, // ธนูฝ่ายบุกแทงทะลุเกราะบนกำแพง (แรง 2)
 
   // AI ผู้บัญชาการฝ่ายเมือง

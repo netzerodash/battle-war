@@ -77,7 +77,13 @@ export function buildCity(scene) {
       if (Math.abs(off) > mid - 4) continue;
       wbox(C.stoneLight, s, off, outer - 0.45, 1.9, 1.5, 0.9, H + 0.75);
     }
-    wbox(C.stoneDark, s, 0, W - 0.3, span, 1.0, 0.6, H + 0.5);
+    // ใบกำแพงด้านใน — เว้นช่องตรงชานพักบันไดขึ้นกำแพง
+    {
+      const st = stairPoints(s);
+      const gapA = SIDE_VECS[s].t.dot(st.top) - 0.5, gapB = SIDE_VECS[s].t.dot(st.landing) + 3;
+      wbox(C.stoneDark, s, (-span / 2 + gapA) / 2, W - 0.3, gapA + span / 2, 1.0, 0.6, H + 0.5);
+      wbox(C.stoneDark, s, (gapB + span / 2) / 2, W - 0.3, span / 2 - gapB, 1.0, 0.6, H + 0.5);
+    }
     const { n, t } = SIDE_VECS[s];
     for (let k = -4; k <= 4; k++) {
       if (k === 0) continue;
@@ -151,7 +157,14 @@ export function buildCity(scene) {
       push(i % 2 ? C.stair : C.woodDark, new THREE.BoxGeometry(4.0, treadThickness, stepDepth).rotateY(yaw).translate(p.x, height - treadThickness / 2, p.z));
       push(C.woodDark, new THREE.BoxGeometry(4.0, risePerStep, 0.16).rotateY(yaw).translate(p.x, height - risePerStep / 2, p.z));
     }
-    push(C.stair, new THREE.BoxGeometry(4.6, 0.5, 3.0).rotateY(yaw).translate(sp.top.x, CFG.walkY - 0.25, sp.top.z));
+    // ชานพักหัวบันได: สะพานสั้นจากหัวบันไดข้ามช่องใบกำแพงด้านใน ต่อเสมอพื้นทางเดินบนกำแพง
+    {
+      const tTop = SIDE_VECS[s].t.dot(sp.top), tLand = SIDE_VECS[s].t.dot(sp.landing);
+      const from = tTop - 0.3, to = tLand + 2.5;
+      const nIn = W - 4.1, nOut = W + 0.25;
+      wbox(C.stair, s, (from + to) / 2, (nIn + nOut) / 2, to - from, 0.5, nOut - nIn, CFG.walkY - 0.25);
+      wbox(C.stoneDark, s, tLand + 1.3, W - 3.2, 1.4, CFG.walkY - 0.5, 1.4, (CFG.walkY - 0.5) / 2);
+    }
     for (const side2 of [-1.7, 1.7]) {
       const rp = midP.clone().addScaledVector(lateral, side2);
       push(C.woodDark, new THREE.BoxGeometry(0.24, 0.32, len + 0.8).rotateX(-angle).rotateY(yaw).translate(rp.x, rp.y + 1.0, rp.z));

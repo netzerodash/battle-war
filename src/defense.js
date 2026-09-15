@@ -119,9 +119,10 @@ export class DefenseSide {
     // Keep the doubled logistics crew in one visible line beside the inner wall.
     // This also leaves the central courtyard free for the reserve formation.
     const lateral = (slot - (CFG.rockLogi.carriers - 1) / 2) * 1.8;
-    return worldPoint(this.side, lateral, CFG.wallHalf - 2.8, 0);
+    // ถอยห่างกำแพงพ้นแนวบันไดขึ้นกำแพงที่เลียบหน้าในกำแพง (ไม่ยืนใต้ขั้นบันได)
+    return worldPoint(this.side, lateral, CFG.wallHalf - 6.5, 0);
   }
-  pilePoint() { return worldPoint(this.side, 2.5, CFG.wallHalf + 4.5, CFG.walkY); }
+  pilePoint() { return worldPoint(this.side, 22, CFG.wallHalf + 4, CFG.walkY); } // กองหินข้างชานพักบันได
 
   updateCarriers(dt) {
     const L = CFG.rockLogi;

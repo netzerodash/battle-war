@@ -20,6 +20,8 @@ const tor = (r, t, arc, x, y, z, hex, ry = 0) => colorize(new THREE.TorusGeometr
 
 const SKIN = 0xd8a37a;
 const RED = 0x7e2020, RED_D = 0x4d1414, IRON = 0x454e57, IRON_D = 0x2e3438, HELM = 0x6a737b, GOLD = 0xd9a441;
+// สีประจำฝ่ายเมือง: เสื้อเกราะน้ำเงิน (ตัดกับทัพเราสีแดง และไม่กลืนกับกำแพงหิน/ลานหินสีเทา)
+const DEF_BLUE = 0x2f5fa8, DEF_BLUE_D = 0x1d3c70, DEF_BLUE_L = 0x4f86d8, GUARD_NAVY = 0x22326e;
 
 // สีธงประจำกอง — แยกประเภทให้อ่านออกบนจอ
 export const BANNER_COLOR = { spear: 0xb03030, shield: 0xc08a3e, archer: 0x4a7a3a, ram: 0x6b4a2a, cav: 0xe8c14a };
@@ -92,17 +94,19 @@ function buildSoldier(type) {
       bannerParts(p, 0.3, 0.05, 2.8, 0.8, 0.6, BANNER_COLOR.ram);
       break;
     case 'def': // หอกฝ่ายเมือง
-      humanoid(IRON, IRON_D, 0x38414a, HELM, true, false);
+      humanoid(DEF_BLUE, DEF_BLUE_D, DEF_BLUE_L, HELM, true, false);
+      p.push(cn(0.06, 0.2, 5, 0, 1.63, 0, DEF_BLUE_L));
       p.push(cy(0.022, 0.022, 2.05, 5, 0.3, 1.05, 0.14, 0x4a3826));
       p.push(cn(0.05, 0.2, 5, 0.3, 2.15, 0.14, 0x8a8f96));
       break;
     case 'carrier': // พลขนหิน — หอกฝ่ายเมืองพร้อมเป้หิน
-      humanoid(0x5a5248, 0x3a352c, 0x4a443a, HELM, true, false);
+      humanoid(0x5a6a88, DEF_BLUE_D, DEF_BLUE_L, HELM, true, false);
       p.push(bx(0.42, 0.38, 0.3, 0, 1.5, -0.18, 0x7d7d7d));
       p.push(bx(0.3, 0.24, 0.24, 0, 0.95, 0.3, 0x7d7d7d));
       break;
     case 'archer': // นักธนูฝ่ายเมือง
-      humanoid(IRON, IRON_D, 0x38414a, HELM, true, false);
+      humanoid(DEF_BLUE, DEF_BLUE_D, DEF_BLUE_L, HELM, true, false);
+      p.push(cn(0.06, 0.2, 5, 0, 1.63, 0, DEF_BLUE_L));
       p.push(tor(0.32, 0.02, Math.PI * 0.85, 0.3, 1.0, 0.1, 0x4a2f1c, Math.PI / 2));
       p.push(bx(0.09, 0.34, 0.09, -0.2, 1.0, -0.16, 0x6b4a2a));
       break;
@@ -138,32 +142,32 @@ function buildSoldier(type) {
       bannerParts(p, -0.34, -0.15, 2.9, 0.85, 0.6, BANNER_COLOR.cav);
       break;
     case 'guardShield': // องครักษ์โล่ชั้นใน — เกราะเหล็กขลิบทอง โล่ใหญ่สีแดง
-      humanoid(IRON, IRON_D, GOLD, HELM, false, false);
+      humanoid(GUARD_NAVY, IRON_D, GOLD, HELM, false, false);
       p.push(bx(0.26, 0.08, 0.26, 0, 1.45, 0, GOLD));
-      p.push(bx(1.0, 1.4, 0.1, 0, 0.95, 0.42, 0x7a1f1b));
+      p.push(bx(1.0, 1.4, 0.1, 0, 0.95, 0.42, DEF_BLUE_D));
       p.push(bx(1.0, 0.12, 0.12, 0, 1.6, 0.42, GOLD));
       p.push(cy(0.18, 0.18, 0.07, 8, 0, 0.95, 0.48, GOLD, Math.PI / 2));
       break;
     case 'guardSpear': // องครักษ์ง้าวชั้นใน — ง้าวยาว พู่แดง
-      humanoid(IRON, IRON_D, GOLD, HELM, true, false);
+      humanoid(GUARD_NAVY, IRON_D, GOLD, HELM, true, false);
       p.push(cy(0.028, 0.028, 2.6, 5, 0.3, 1.3, 0.14, 0x3a2a1c));
       p.push(bx(0.05, 0.36, 0.2, 0.3, 2.62, 0.2, 0x9aa3ad));
-      p.push(cn(0.07, 0.14, 6, 0.3, 2.4, 0.14, 0xb03030));
+      p.push(cn(0.07, 0.14, 6, 0.3, 2.4, 0.14, DEF_BLUE_L));
       break;
     case 'guardArcher': // พลธนูบนกำแพงชั้นใน — หมวกทอง
-      humanoid(IRON, IRON_D, GOLD, GOLD, true, false);
+      humanoid(GUARD_NAVY, IRON_D, GOLD, GOLD, true, false);
       p.push(tor(0.34, 0.022, Math.PI * 0.85, 0.3, 1.0, 0.1, 0x4a2f1c, Math.PI / 2));
       p.push(bx(0.09, 0.34, 0.09, -0.2, 1.0, -0.16, 0x6b4a2a));
       break;
     case 'guardCav': { // ม้าองครักษ์วัง — เกราะม้าแดง คนขี่ขลิบทอง
-      p.push(bx(0.6, 0.6, 1.55, 0, 0.95, 0, 0x5a1c18));
-      p.push(bx(0.26, 0.58, 0.32, 0, 1.28, 0.8, 0x5a1c18, -0.5));
+      p.push(bx(0.6, 0.6, 1.55, 0, 0.95, 0, DEF_BLUE_D));
+      p.push(bx(0.26, 0.58, 0.32, 0, 1.28, 0.8, DEF_BLUE_D, -0.5));
       p.push(bx(0.22, 0.28, 0.58, 0, 1.6, 1.1, 0x2e2e33));
       for (const [lx, lz] of [[-0.2, 0.55], [0.2, 0.55], [-0.2, -0.55], [0.2, -0.55]]) {
         p.push(bx(0.15, 0.75, 0.17, lx, 0.375, lz, 0x2e2e33));
       }
       p.push(bx(0.52, 0.1, 0.62, 0, 1.27, 0.05, GOLD));
-      p.push(bx(0.42, 0.52, 0.28, 0, 1.63, 0.0, IRON));
+      p.push(bx(0.42, 0.52, 0.28, 0, 1.63, 0.0, GUARD_NAVY));
       p.push(bx(0.44, 0.08, 0.3, 0, 1.9, 0.0, GOLD));
       p.push(bx(0.2, 0.2, 0.2, 0, 2.0, 0, SKIN));
       p.push(cn(0.17, 0.24, 6, 0, 2.2, 0, GOLD));
@@ -179,7 +183,7 @@ function buildSoldier(type) {
         p.push(bx(0.14, 0.75, 0.16, lx, 0.375, lz, 0x2e2e33));
       }
       p.push(bx(0.5, 0.1, 0.6, 0, 1.27, 0.05, 0x6b3423));
-      p.push(bx(0.4, 0.5, 0.26, 0, 1.62, 0.0, IRON));
+      p.push(bx(0.4, 0.5, 0.26, 0, 1.62, 0.0, DEF_BLUE));
       p.push(bx(0.2, 0.2, 0.2, 0, 2.0, 0, SKIN));
       p.push(cn(0.16, 0.2, 6, 0, 2.18, 0, HELM));
       p.push(cy(0.02, 0.02, 2.2, 5, 0.32, 1.7, 0.12, 0x4a3826));

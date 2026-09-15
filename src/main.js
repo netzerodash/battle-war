@@ -514,6 +514,9 @@ renderer.setAnimationLoop(() => {
     if (drumT <= 0) { drumT = 1.9; sfx.drum(); }
   }
 
+  // วงสีใต้เท้า + ป้ายจำนวนทหารเมือง (มุมทหาร = ปิดป้าย เพราะกล้องไม่ได้อิงจุดหมุนแล้ว)
+  if (battle) battle.updateOverlays(dt, unitViewSoldier ? 0 : camera.position.distanceTo(controls.target), camera);
+
   // จอสั่น (offset ชั่วคราวรอบการเรนเดอร์)
   const shakeMag = battle ? battle.shake * 0.4 : 0;
   let sx = 0, sy = 0, sz = 0;

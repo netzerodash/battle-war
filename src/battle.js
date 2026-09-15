@@ -18,6 +18,7 @@ import { SpatialHash } from './spatial-hash.js';
 import { EngagementRegistry } from './engagement.js';
 import { assaultRoute, fieldRoute, nextHop } from './navigation.js';
 import { chooseTacticalTarget } from './tactical-ai.js';
+import { DefenderMarkers, DefenderGroupLabels, markerScaleForDistance } from './markers.js';
 
 const SPARK_MATS = {
   red: new THREE.MeshBasicMaterial({ color: 0xc03028 }),
@@ -121,12 +122,36 @@ export function cityOrderDestinations(companies, point) {
 class StairChannel {
   constructor(side) {
     this.side = side;
-    const sp = stairPoints(side);
-    this.base = sp.base;
-    this.top = sp.top;
-    this.len = sp.base.distanceTo(sp.top);
+    // เส้นทาง: โคนบันได → หัวบันได (เลียบกำแพง) → ชานพักบนทางเดินกำแพง
+    const { base, top, landing } = stairPoints(side);
+    this.base = base;
+    this.top = landing;
+    this.segs = [[base, top], [top, landing]].map(([a, b]) => {
+      const flat = b.clone().sub(a).setY(0).normalize();
+      return { a, b, len: a.distanceTo(b), lateral: new THREE.Vector3(flat.z, 0, -flat.x) };
+    });
+    this.len = this.segs.reduce((n, seg) => n + seg.len, 0);
     this.up = [];
     this.down = [];
+  }
+  pointAt(dist, out) {
+    let rem = Math.max(0, Math.min(this.len, dist));
+    for (let i = 0; i < this.segs.length; i++) {
+      const seg = this.segs[i];
+      if (rem <= seg.len || i === this.segs.length - 1) {
+        out.lerpVectors(seg.a, seg.b, Math.min(1, rem / seg.len));
+        return seg;
+      }
+      rem -= seg.len;
+    }
+    return this.segs[0];
+  }
+  // วางทหารตามเลนขึ้น (+) / เลนลง (−) ของช่วงที่อยู่ แล้วหันหน้าไปทางที่เดิน
+  place(s, dir, dt) {
+    const seg = this.pointAt(s.stair.s, _t1);
+    s.pos.copy(_t1).addScaledVector(seg.lateral, dir * 0.95);
+    this.pointAt(s.stair.s + dir * 1.5, _t2);
+    s.facePoint(_t2, dt);
   }
   requestUp(s) {
     if (s.stair) return false;
@@ -156,19 +181,13 @@ class StairChannel {
       if (dir > 0) {
         const cap = prevS === null ? this.len : prevS - CFG.rockLogi.spacing;
         s.stair.s = Math.min(cap, s.stair.s + CFG.rockLogi.stairSpeed * dt);
-        _t1.lerpVectors(this.base, this.top, s.stair.s / this.len);
-        _t1.addScaledVector(SIDE_VECS[this.side].t, 0.95);
-        s.pos.copy(_t1);
-        s.facePoint(this.top, dt);
+        this.place(s, 1, dt);
         prevS = s.stair.s;
         if (s.stair.s >= this.len - 0.02) { arrived = true; prevS = this.len; }
       } else {
         const cap = prevS === null ? 0 : prevS + CFG.rockLogi.spacing;
         s.stair.s = Math.max(cap, s.stair.s - CFG.rockLogi.stairSpeed * dt);
-        _t1.lerpVectors(this.base, this.top, s.stair.s / this.len);
-        _t1.addScaledVector(SIDE_VECS[this.side].t, -0.95);
-        s.pos.copy(_t1);
-        s.facePoint(this.base, dt);
+        this.place(s, -1, dt);
         prevS = s.stair.s;
         if (s.stair.s <= 0.02) { arrived = true; prevS = 0; }
       }
@@ -286,6 +305,11 @@ export class Battle {
       this.group.add(hpBack, hpFront);
       c.healthBar = { back: hpBack, front: hpFront };
     }
+    // ตัวช่วยมองเห็นทหารเมือง: วงสีใต้เท้า + ป้ายจำนวนต่อกลุ่ม (อัปเดตจาก main ทุกเฟรม แม้หยุดเกม)
+    this.defMarkers = new DefenderMarkers(this.group);
+    this.defLabels = new DefenderGroupLabels(this.group);
+    this.defGroupT = 0;
+    this.defGroups = [];
     this.hoverRing = new THREE.Mesh(ringGeo, ringMatHover);
     this.hoverRing.rotation.x = -Math.PI / 2;
     this.hoverRing.visible = false;
@@ -1081,10 +1105,10 @@ export class Battle {
         if (!forcedDescent && (directiveBlocksDescent || s.wallSupport)) continue;
         if (slots > 0 && s.state === 'wall') {
           s.state = 'toStair';
-          s.orderTarget = sp.top;
+          s.orderTarget = sp.landing;
           slots--;
         }
-        if (s.state === 'toStair' && s.pos.distanceTo(sp.top) < 1.3) {
+        if (s.state === 'toStair' && s.pos.distanceTo(sp.landing) < 1.3) {
           st.requestDown(s);
         }
       }
@@ -1182,14 +1206,14 @@ export class Battle {
         if (!s.alive) continue;
         if (s.zone === 'wall' && !s.stair) {
           s.state = 'toStairD';
-          s.orderTarget = sp.top;
+          s.orderTarget = sp.landing;
           sent++;
         }
       }
       for (const s of d.archers) {
         if (!s.alive || s.zone !== 'wall' || s.stair) continue;
         s.state = 'toStairD';
-        s.orderTarget = sp.top;
+        s.orderTarget = sp.landing;
         sent++;
       }
       if (sent > 0) this.onEvent('evacuate', { side: d.side, n: sent });
@@ -1198,7 +1222,7 @@ export class Battle {
       const st = this.stairs[d.side];
       const sp = stairPoints(d.side);
       for (const s of [...d.melee, ...d.archers]) {
-        if (s.alive && s.state === 'toStairD' && s.pos.distanceTo(sp.top) < 1.3 && st.down.length < 12) {
+        if (s.alive && s.state === 'toStairD' && s.pos.distanceTo(sp.landing) < 1.3 && st.down.length < 12) {
           st.requestDown(s);
         }
       }
@@ -2068,6 +2092,47 @@ export class Battle {
         this.markers.splice(i, 1);
       }
     }
+  }
+
+  // ทหารฝ่ายเมืองทุกนาย (ไม่สร้างอาร์เรย์ใหม่ทุกเฟรม)
+  *defenderUnits() {
+    for (const d of this.defenses) {
+      yield* d.melee;
+      yield* d.archers;
+      for (const c of d.carriers) yield c.s;
+    }
+    for (const sq of this.reserves.squads) yield* sq.soldiers;
+    if (this.garrison) { yield* this.garrison.soldiers; yield* this.garrison.archers; }
+    yield* this.sally.horses;
+  }
+
+  // จัดกลุ่มทหารเมืองตามตำแหน่งจริงสำหรับป้ายจำนวน: กำแพงนอก/เมืองนอก/เมืองชั้นในแยกตามด้าน, ลานวัง, ม้าซอง
+  defenderGroups() {
+    const acc = new Map();
+    const add = (key, icon, s) => {
+      let g = acc.get(key);
+      if (!g) { g = { key, icon, count: 0, x: 0, y: 0, z: 0 }; acc.set(key, g); }
+      g.count++;
+      g.x += s.pos.x;
+      g.z += s.pos.z;
+      g.y = Math.max(g.y, s.pos.y);
+    };
+    for (const s of this.defenderUnits()) {
+      if (!s.alive || s.stair) continue;
+      if (s.zone === 'wall') add(`wall${sectionOf(s.pos)}`, '🛡', s);
+      else if (s.zone === 'city') add(`city${sectionOf(s.pos)}`, '⚔', s);
+      else if (s.zone === 'inner' || s.zone === 'wall2') add(`inner${sectionOf(s.pos)}`, '🏮', s);
+      else if (s.zone === 'palace' || s.zone === 'wall3') add('palace', '👑', s);
+      else if (s.zone === 'field') add('sally', '🐎', s);
+    }
+    return [...acc.values()].map((g) => ({ ...g, x: g.x / g.count, z: g.z / g.count }));
+  }
+
+  updateOverlays(dt, cameraDist, camera = null) {
+    this.defMarkers.update(this.defenderUnits(), markerScaleForDistance(cameraDist));
+    this.defGroupT -= dt;
+    if (this.defGroupT <= 0) { this.defGroupT = 0.4; this.defGroups = this.defenderGroups(); }
+    this.defLabels.update(this.defGroups, cameraDist, camera);
   }
 
   // ข้อมูลสำหรับ HUD
