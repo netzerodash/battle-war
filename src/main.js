@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { initScene, updateCameraTween } from './scene.js';
 import { buildCity, animateCityFlags, openGateDoors } from './city.js';
-import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, genMission } from './config.js';
+import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, TEAM_COLORS, genMission } from './config.js';
 import { Battle } from './battle.js';
 import { SIDE_VECS, classifyOrderPoint, sectionOf } from './world.js';
 import * as UI from './ui.js';
+import { Minimap } from './minimap.js';
 import { initAudio, setMuted, isMuted, sfx } from './audio.js';
 
 const { renderer, scene, camera, controls } = initScene(document.getElementById('app'));
@@ -49,6 +50,7 @@ window.__game = {
   controls,
   focusSide,
   focusWide,
+  focusPalace,
   startWithSeed(seed) { mission = genMission(seed); startBattle(false); },
 };
 
@@ -216,8 +218,8 @@ function pickCompaniesInRect(x0, y0, x1, y1) {
 function startBattle(rerollMission) {
   if (battle) { scene.remove(battle.group); battle = null; }
   if (rerollMission) mission = genMission();
-  city.sides.forEach((s) => s.flagMat.color.set(0xb03030));
-  city.palaceFlag.flagMat.color.set(0xb03030);
+  city.sides.forEach((s) => s.flagMat.color.set(TEAM_COLORS.city));
+  city.palaceFlag.flagMat.color.set(TEAM_COLORS.city);
   for (const g of city.gates) openGateDoors(g.doorL, g.doorR, 0);
   battle = new Battle(mission, scene, city, onBattleEvent);
   // Keep a new battle in sync with the tactical controls the player can already see.
@@ -233,10 +235,18 @@ function startBattle(rerollMission) {
   document.getElementById('intro').classList.add('hidden');
   document.getElementById('end').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
+  document.body.classList.remove('hud-off');
+  setMenu(false);
+  toggleHelp(false);
+  minimap.resize();
   captureChoice.classList.add('hidden');
   pendingCaptureSide = null;
   focusWide();
   UI.toast('🎺 เป้าหมาย: ฝ่ากำแพงสามชั้นเข้าไปยึดลานวังต้องห้าม — ลากซ้ายเลือกกอง คลิกขวาสั่งทัพ');
+  // คำแนะนำครั้งแรก: บอกว่ารายละเอียดย้ายไปอยู่ที่ไหน (แทนคำใบ้ถาวรบนจอ)
+  let hintSeen = false;
+  try { hintSeen = localStorage.getItem('siege.hudHintSeen') === '1'; localStorage.setItem('siege.hudHintSeen', '1'); } catch { /* ไม่มี storage ก็แสดงทุกครั้ง */ }
+  if (!hintSeen) setTimeout(() => UI.toast('❔ วิธีเล่นและปุ่มลัดอยู่ในเมนู ⋯ (หรือกด ?) · คลิกแผนที่ย่อมุมซ้ายล่างเพื่อย้ายกล้อง'), 3500);
 }
 
 function onBattleEvent(type, data) {
@@ -415,7 +425,7 @@ document.getElementById('btn-end-newmission').onclick = () => { initAudio(); sta
 // ปุ่มเสียง
 document.getElementById('btn-sound').onclick = () => {
   setMuted(!isMuted());
-  document.getElementById('btn-sound').textContent = isMuted() ? '🔇' : '🔊';
+  document.getElementById('btn-sound').textContent = isMuted() ? '🔇 เสียง: ปิด' : '🔊 เสียง: เปิด';
 };
 unitViewButton.onclick = toggleUnitView;
 formationSelect.onchange = () => { if (battle) battle.commandFormation = formationSelect.value; };
@@ -446,6 +456,11 @@ document.querySelectorAll('.hud-speed .spd[data-speed]').forEach((b) => {
 
 window.addEventListener('keydown', (e) => {
   if (!battle) return;
+  if (e.target.closest?.('select, input, textarea')) return;
+  if (e.key === '?') { toggleHelp(); return; }
+  if (e.key === 'h' || e.key === 'H') { toggleHud(); return; }
+  if (e.key === 'Escape' && !helpEl.classList.contains('hidden')) { toggleHelp(false); return; }
+  if (e.key === 'Escape' && !hudMenu.classList.contains('hidden')) { setMenu(false); return; }
   if (e.key >= '1' && e.key <= '4') focusSide(+e.key - 1);
   else if (e.key === '5') focusPalace();
   else if (e.key === '0') focusWide();
@@ -461,10 +476,6 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------- ปุ่มควบคุมจอสัมผัส + แตะการ์ดด้าน = มุมกล้อง ----------
-hudEls.sideEls.forEach((el, i) => {
-  el.root.addEventListener('click', () => focusSide(i));
-  el.root.title = 'แตะเพื่อส่งกล้องไปด้านนี้';
-});
 if (isTouch) {
   const $ = (id) => document.getElementById(id);
   $('tb-box').onclick = () => {
@@ -478,6 +489,77 @@ if (isTouch) {
   $('tb-zi').onclick = () => zoomCam(0.78);
   $('tb-zo').onclick = () => zoomCam(1.28);
   $('tb-wide').onclick = () => focusWide();
+}
+
+// ---------- เมนู ⋯ / วิธีเล่น / ซ่อน HUD / แผนที่ย่อ ----------
+const hudMenu = document.getElementById('hud-menu');
+const menuButton = document.getElementById('btn-menu');
+const helpEl = document.getElementById('help');
+function setMenu(open) {
+  hudMenu.classList.toggle('hidden', !open);
+  menuButton.setAttribute('aria-expanded', String(open));
+}
+menuButton.onclick = (e) => { e.stopPropagation(); setMenu(hudMenu.classList.contains('hidden')); };
+hudMenu.addEventListener('click', () => setMenu(false));
+window.addEventListener('pointerdown', (e) => {
+  if (!hudMenu.classList.contains('hidden') && !hudMenu.contains(e.target) && e.target !== menuButton) setMenu(false);
+});
+function toggleHelp(force) {
+  const open = force ?? helpEl.classList.contains('hidden');
+  helpEl.classList.toggle('hidden', !open);
+}
+document.getElementById('btn-help').onclick = () => toggleHelp(true);
+document.getElementById('btn-help-close').onclick = () => toggleHelp(false);
+function toggleHud() {
+  const off = document.body.classList.toggle('hud-off');
+  UI.toast(off ? 'ซ่อน HUD แล้ว — กด H เพื่อแสดง' : 'แสดง HUD');
+}
+document.getElementById('btn-hide-hud').onclick = toggleHud;
+
+// เลื่อนกล้องไปจุดบนพื้น โดยคงมุมมอง/ระยะเดิม (ลากบนแผนที่ย่อ = เลื่อนทันที, คลิก = เลื่อนนุ่ม ๆ)
+function lookAtGround(x, z, instant) {
+  const offset = camera.position.clone().sub(controls.target);
+  const target = new THREE.Vector3(x, 4, z);
+  if (instant) {
+    camera.__focusTween = null;
+    controls.target.copy(target);
+    camera.position.copy(target).add(offset);
+    controls.update();
+  } else {
+    setFocus(target.clone().add(offset), target);
+  }
+}
+const minimapWrap = document.getElementById('minimap-wrap');
+const minimapToggle = document.getElementById('btn-minimap');
+const minimap = new Minimap(document.getElementById('minimap'), {
+  tipEl: document.getElementById('minimap-tip'),
+  tipFor: (x, z) => (battle ? UI.mapTip(battle, x, z) : ''),
+  onPick: (x, z, drag) => lookAtGround(x, z, drag),
+});
+function setMinimapCollapsed(collapsed) {
+  minimapWrap.classList.toggle('collapsed', collapsed);
+  minimapToggle.textContent = collapsed ? '▸' : '▾';
+  if (!collapsed) minimap.resize();
+}
+minimapToggle.onclick = () => {
+  const collapsed = !minimapWrap.classList.contains('collapsed');
+  setMinimapCollapsed(collapsed);
+  try { localStorage.setItem('siege.minimapCollapsed', collapsed ? '1' : '0'); } catch { /* ไม่จำก็ได้ */ }
+};
+try { if (localStorage.getItem('siege.minimapCollapsed') === '1') setMinimapCollapsed(true); } catch { /* ใช้ค่าเริ่มต้น */ }
+
+// มุมกล้องบนพื้น — กรอบสี่มุมในแผนที่ย่อ (มุมที่มองขึ้นฟ้าจะถูกยืดไปตามทิศมอง)
+const VIEW_NDC = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+function viewCorners() {
+  return VIEW_NDC.map(([x, y]) => {
+    mouseNdc.set(x, y);
+    raycaster.setFromCamera(mouseNdc, camera);
+    const p = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(groundPlane, p) && p.distanceTo(camera.position) < 900) return [p.x, p.z];
+    const d = raycaster.ray.direction;
+    const flat = new THREE.Vector3(d.x, 0, d.z).normalize();
+    return [camera.position.x + flat.x * 600, camera.position.z + flat.z * 600];
+  });
 }
 
 // ---------- ลูปหลัก ----------
@@ -531,7 +613,8 @@ renderer.setAnimationLoop(() => {
     hudTimer += dt;
     if (hudTimer > 0.15) {
       hudTimer = 0;
-      UI.updateHUD(hudEls, battle);
+      UI.updateHUD(hudEls, battle, pendingCaptureSide);
+      minimap.draw(battle, viewCorners());
       const hoverC = pickCompany(mousePos.x, mousePos.y, 26);
       battle.setHover(hoverC);
     }

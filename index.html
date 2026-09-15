@@ -40,74 +40,72 @@
     </div>
   </div>
 
-  <!-- Battle HUD -->
+  <!-- Battle HUD — เบาบาง: แถบบน + แผนที่ย่อ + แถบคำสั่ง (โผล่เฉพาะตอนเลือกกอง) -->
   <div id="hud" class="hidden">
     <div class="hud-top">
-      <div class="hud-timer">⏱ <span id="hud-time">0:00</span></div>
-      <div class="hud-objective" id="hud-objective"></div>
+      <div class="hud-timer" id="hud-timer">⏱ <span id="hud-time">0:00</span></div>
+      <div class="hud-gates" aria-label="ประตูสามชั้น">
+        <div class="gate-pip" data-ring="0"><span class="gi">🚪</span><div class="pipbar"><div></div></div></div>
+        <div class="gate-pip" data-ring="1"><span class="gi">🏮</span><div class="pipbar"><div></div></div></div>
+        <div class="gate-pip" data-ring="2"><span class="gi">⛩</span><div class="pipbar"><div></div></div></div>
+      </div>
+      <div class="hud-palace" id="hud-palace"><span class="gi">🏯</span><div class="pipbar wide"><div></div></div><b id="hud-palace-pct">0%</b></div>
       <div class="hud-speed">
-        <button data-speed="0" class="btn spd">⏸</button>
-        <button data-speed="1" class="btn spd active">▶ 1x</button>
-        <button data-speed="2" class="btn spd">▶▶ 2x</button>
-        <button data-speed="4" class="btn spd">▶▶▶ 4x</button>
-        <button id="btn-unit-view" class="btn spd" title="เข้ามุมมองของทหารที่คลิก" disabled>👁 มุมทหาร</button>
-        <button id="btn-sound" class="btn spd" title="เปิด/ปิดเสียง">🔊</button>
-        <button id="btn-abort" class="btn danger">ธงขาว</button>
+        <button data-speed="0" class="btn spd" title="หยุดชั่วคราว (Space)">⏸</button>
+        <button data-speed="1" class="btn spd active">1x</button>
+        <button data-speed="2" class="btn spd">2x</button>
+        <button data-speed="4" class="btn spd">4x</button>
+      </div>
+      <button id="btn-menu" class="btn spd icon" title="เมนู" aria-haspopup="true" aria-expanded="false">⋯</button>
+      <div id="hud-menu" class="hud-menu hidden" role="menu">
+        <button id="btn-unit-view" class="menu-item" role="menuitem" disabled>👁 มุมทหาร</button>
+        <button id="btn-focus-combat" class="menu-item" role="menuitem">⚔ ไปจุดปะทะล่าสุด</button>
+        <button id="btn-sound" class="menu-item" role="menuitem">🔊 เสียง: เปิด</button>
+        <button id="btn-hide-hud" class="menu-item" role="menuitem">🙈 ซ่อน HUD (H)</button>
+        <button id="btn-help" class="menu-item" role="menuitem">❔ วิธีเล่น (?)</button>
+        <button id="btn-abort" class="menu-item danger" role="menuitem">🏳 ธงขาว</button>
       </div>
     </div>
 
-    <div id="hud-cards"></div>
-
-    <div class="hud-global">
-      <div id="hud-gate">
-        <div class="gline">🚪 ประตูเมืองชั้นนอก — <b id="hud-gate-text">ปิด</b></div>
-        <div class="capbar"><div></div></div>
-      </div>
-      <div id="hud-inner">
-        <div class="gline">🏮 ประตูเมืองชั้นใน — <b id="hud-gate1-text">ปิด</b></div>
-        <div class="capbar gate1"><div></div></div>
-        <div class="gline">🏮 ประตูวังต้องห้าม — <b id="hud-gate2-text">ปิด</b></div>
-        <div class="capbar gate2"><div></div></div>
-      </div>
-      <div id="hud-palace">
-        <div class="gline">🏯 ยึดลานวัง — <b id="hud-palace-text">0%</b></div>
-        <div class="capbar"><div></div></div>
-      </div>
-      <div class="gline" id="hud-reserves"></div>
-      <div class="gline" id="hud-sel-text"></div>
-      <div class="tactical-controls">
-        <label>รูปขบวน
-          <select id="cmd-formation">
-            <option value="line">แนวรบ</option>
-            <option value="column">แถวตอน</option>
-            <option value="shield-front">โล่นำหน้า</option>
-            <option value="loose">กระจายตัว</option>
-          </select>
-        </label>
-        <label>ท่าที
-          <select id="cmd-stance">
-            <option value="aggressive">บุกไล่</option>
-            <option value="hold">รักษาแนว</option>
-            <option value="avoid-arrows">หลบแนวธนู</option>
-          </select>
-        </label>
-      </div>
-      <button id="btn-retreat" class="btn tactical-retreat">↩ ถอนกำลังกลับแนวตั้งต้น</button>
-      <button id="btn-hold-fire" class="btn tactical-retreat">🏹 สลับพักยิงของธนูที่เลือก</button>
-      <button id="btn-focus-combat" class="btn tactical-retreat">⚔ ไปยังจุดปะทะล่าสุด</button>
-      <div class="gline tactical-status" id="hud-tactical-status"></div>
-      <div class="legend-mini">
-        <span><span class="dot red"></span>หอก</span>
-        <span><span class="dot bronze"></span>โล่</span>
-        <span><span class="dot green"></span>ธนู</span>
-        <span><span class="dot dark"></span>รถทุบ</span>
-        <span><span class="dot gold"></span>ม้า</span>
-        <span><span class="dot blue"></span>ทหารเมือง</span>
-        <span><span class="dot violet"></span>องครักษ์</span>
-      </div>
+    <div id="minimap-wrap">
+      <canvas id="minimap" aria-label="แผนที่ย่อ — คลิกเพื่อย้ายกล้อง"></canvas>
+      <div id="minimap-tip" class="minimap-tip hidden"></div>
+      <button id="btn-minimap" class="btn mini-toggle" title="พับ/กางแผนที่ย่อ">▾</button>
     </div>
 
-    <div class="hud-hint" id="hud-hint">คลิกตัวทหาร → 👁 มุมทหาร · ลากซ้าย = เลือกกอง · คลิกขวา = สั่งทัพ · Esc = ออกจากมุมทหาร</div>
+    <div id="cmd-bar" class="cmd-bar hidden">
+      <div class="cmd-info">
+        <b id="hud-sel-text"></b>
+        <span id="hud-tactical-status" class="tactical-status"></span>
+      </div>
+      <div class="cmd-controls">
+        <select id="cmd-formation" title="รูปขบวน">
+          <option value="line">แนวรบ</option>
+          <option value="column">แถวตอน</option>
+          <option value="shield-front">โล่นำหน้า</option>
+          <option value="loose">กระจายตัว</option>
+        </select>
+        <select id="cmd-stance" title="ท่าที">
+          <option value="aggressive">บุกไล่</option>
+          <option value="hold">รักษาแนว</option>
+          <option value="avoid-arrows">หลบแนวธนู</option>
+        </select>
+        <button id="btn-retreat" class="btn cmd" title="ถอนกำลังกลับแนวตั้งต้น">↩ ถอย</button>
+        <button id="btn-hold-fire" class="btn cmd" title="สลับพักยิงของธนูที่เลือก">🏹 พักยิง</button>
+      </div>
+      <div id="cmd-groups" class="cmd-groups"></div>
+    </div>
+
+    <div id="banner" class="banner hidden" aria-live="polite"></div>
+    <div id="toasts" aria-live="polite"></div>
+
+    <div id="capture-choice" class="capture-chip hidden">
+      <b id="capture-choice-title">ยึดกำแพงแล้ว</b>
+      <button class="btn cmd" data-capture-action="hold">🛡 รักษา</button>
+      <button class="btn cmd" data-capture-action="reinforce">↔ ช่วยข้าง</button>
+      <button class="btn cmd primary" data-capture-action="descend">⚔ ลงเมือง</button>
+      <span id="capture-countdown" class="count" title="ถ้าไม่เลือก จะไปช่วยกำแพงด้านข้างเอง">8</span>
+    </div>
 
     <!-- แถบควบคุมสำหรับจอสัมผัส -->
     <div id="touchbar" class="hidden">
@@ -123,18 +121,33 @@
         <button id="tb-wide" class="btn tb" title="มุมกว้าง">🎬</button>
       </div>
     </div>
+  </div>
 
-    <div id="toasts"></div>
-
-    <div id="capture-choice" class="capture-choice hidden">
-      <b id="capture-choice-title">ยึดกำแพงแล้ว</b>
-      <span>สั่งทหารบนกำแพง:</span>
-      <div class="row">
-        <button class="btn" data-capture-action="hold">🛡 รักษากำแพง</button>
-        <button class="btn" data-capture-action="reinforce">↔ ช่วยด้านข้าง</button>
-        <button class="btn primary" data-capture-action="descend">⚔ ลงเมือง</button>
+  <!-- วิธีเล่น (เปิดจากเมนู ⋯ หรือปุ่ม ?) -->
+  <div id="help" class="overlay hidden">
+    <div class="modal help">
+      <div class="modal-title">❔ วิธีเล่น</div>
+      <p><b>ชนะ:</b> ฝ่ากำแพงสามชั้นเข้าไปยืนในลานวังต้องห้ามให้ครบ 20 วินาที โดยทหารเราในลานต้องมากกว่าองครักษ์ — ภายใน 15 นาที</p>
+      <div class="legend">
+        <div><span class="dot red"></span><b>หอก</b> — แบกบันได ปีน ปะทะ</div>
+        <div><span class="dot bronze"></span><b>พลโล่</b> — กันธนูให้ทัพรอบข้าง</div>
+        <div><span class="dot green"></span><b>นักธนู</b> — ยิงกดกำแพง</div>
+        <div><span class="dot dark"></span><b>รถทุบ</b> — ทุบประตูเมืองชั้นนอก</div>
+        <div><span class="dot gold"></span><b>ทหารม้า</b> — เข้าเมืองทางประตูเท่านั้น</div>
+        <div><span class="dot blue"></span><b>ทหารเมือง</b> — เสื้อน้ำเงิน วงน้ำเงินใต้เท้า (วงฟ้า = พลธนู)</div>
+        <div><span class="dot violet"></span><b>องครักษ์ชั้นใน/วัง</b> — วงม่วง เก่งกว่าทหารกำแพงนอก</div>
       </div>
-      <small>ถ้าไม่เลือกภายใน 8 วินาที จะไปช่วยกำแพงด้านข้าง</small>
+      <h4>HUD</h4>
+      <p class="dim">แถบบน: เวลา · ประตูสามชั้น 🚪 🏮 ⛩ (แถบ = ความแข็งแรง) · 🏯 ความคืบหน้ายึดลานวัง — ชี้ค้างเพื่อดูรายละเอียด · แผนที่ย่อมุมซ้ายล่าง: จุดแดง = ทัพเรา, จุดน้ำเงิน = ทหารเมือง, ขอบกำแพงเป็นสีแดงเมื่อยึดได้ · ชี้ที่ขอบกำแพง/ประตูบนแผนที่ย่อเพื่อดูสถานะ · คลิกเพื่อย้ายกล้อง</p>
+      <h4>เมาส์</h4>
+      <p class="dim">ลากซ้าย = เลือกกอง (Shift เพิ่ม) · ดับเบิลคลิก = เลือกกองชนิดเดียวกันใกล้เคียง · คลิกขวา = สั่งทัพ (👣 เดินทัพ · ⚔ โจมตี) · ลากขวา = หมุนกล้อง · ล้อเมาส์ = ซูม</p>
+      <h4>ในเมือง</h4>
+      <p class="dim">คลิกขวาจุดเดียว = ทุกกองมุ่งไปจุดนั้นเป็นแถวตอน ฟันศัตรูระหว่างทาง · คลิกขวาที่ประตูชั้นใน = ไปฟันประตู · คลิกขวาที่กำแพงชั้นใน = พาดบันไดข้าม · คลิกขวาที่กำแพงนอกจากในเมือง = ขึ้นบันไดในไปกวาดทหารบนกำแพง</p>
+      <h4>ปุ่มลัด</h4>
+      <p class="dim" id="help-keys">Space = หยุด/เล่น · H = ซ่อน/แสดง HUD · ? = วิธีเล่น · Esc = ยกเลิกเลือก · 1–4 = มุมด้าน · 5 = ลานวัง · 0 = มุมกว้าง</p>
+      <h4>มือถือ</h4>
+      <p class="dim">แตะกอง = เลือก · เลือกแล้วแตะกำแพง = สั่งโจมตี · แตะทุ่ง = หลอกล่อ · 🔲 = ลากครอบเลือก · ลากนิ้วเดียว = หมุนกล้อง · บีบสองนิ้ว = ซูม · แตะแผนที่ย่อ = ย้ายกล้อง</p>
+      <button id="btn-help-close" class="btn primary big">กลับสู่สนามรบ</button>
     </div>
   </div>
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as BGU from 'three/addons/utils/BufferGeometryUtils.js';
-import { CFG } from './config.js';
+import { CFG, TEAM_COLORS } from './config.js';
 import { SIDE_VECS, stairPoints, gateHalfWidth } from './world.js';
 
 const C = {
@@ -10,7 +10,7 @@ const C = {
   red: 0x8f2f2f, redDark: 0x5a2b22,
   gold: 0xd9a441,
   tree: 0x3f5d3a, treeTrunk: 0x5a4026,
-  banner: 0xb03030,
+  banner: TEAM_COLORS.city, // ธงฝ่ายเมือง
   stair: 0x5f4326,
   // โทนวังต้องห้าม: กำแพงชาด หลังคากระเบื้องเคลือบเหลือง ฐานหินอ่อน
   vermilion: 0x9b3326, vermilionDark: 0x74241a,

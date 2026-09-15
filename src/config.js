@@ -145,6 +145,9 @@ export const CFG = {
   },
 };
 
+// สีประจำฝ่าย: ทัพเรา = แดง, ฝ่ายเมือง = น้ำเงิน (ธงเมืองเปลี่ยนเป็นแดงเมื่อเรายึดได้)
+export const TEAM_COLORS = Object.freeze({ attacker: 0xb03030, city: 0x2f5fa8 });
+
 export const SIDE_NAMES = ['เหนือ', 'ตะวันออก', 'ใต้', 'ตะวันตก'];
 export const GATE_NAMES = ['ประตูเมืองชั้นนอก', 'ประตูเมืองชั้นใน', 'ประตูวังต้องห้าม'];
 export const WALL_NAMES = ['กำแพงเมืองชั้นนอก', 'กำแพงเมืองชั้นใน', 'กำแพงวังต้องห้าม'];

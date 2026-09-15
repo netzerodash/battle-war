@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CFG, mulberry32 } from './config.js';
+import { CFG, mulberry32, TEAM_COLORS } from './config.js';
 import {
   SIDE_VECS, worldPoint, sectionOf, clampOnWall, sectionCenter, nearestSide, clamp,
   stairPoints, gateInsidePoint, clampFieldPoint, wallRoute, constrainFieldOutsideWall,
@@ -102,8 +102,9 @@ const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
 // สถานะที่กองร้อยกำลังพาทหารเดินตามคำสั่งอยู่ — melee loop ต้องไม่ลากทหารแย่งกับกอง
 const COMPANY_MOVE_STATES = new Set(['march', 'ride', 'cityMarch', 'escalade']);
-const PALACE_RED = new THREE.Color(0xb03030);
-const PALACE_BLUE = new THREE.Color(0x3d7ac0);
+// ธงลานวัง: สีเมือง → สีทัพเราตามความคืบหน้าการยึด
+const PALACE_CITY = new THREE.Color(TEAM_COLORS.city);
+const PALACE_TAKEN = new THREE.Color(TEAM_COLORS.attacker);
 
 // ลานรวมพลในเมืองชั้นนอก: กึ่งกลางระหว่างประตูนอกกับประตูเมืองชั้นใน บนแกนใต้
 export function cityRallyPoint() {
@@ -716,7 +717,7 @@ export class Battle {
     this.palace.def = def;
     this.palace.progress = palaceProgressStep(before, atk, def, dt, CFG.palace);
     if (before === 0 && this.palace.progress > 0) this.onEvent('palace_contest', {});
-    if (this.palaceFlag) this.palaceFlag.flagMat.color.copy(PALACE_RED).lerp(PALACE_BLUE, this.palace.progress);
+    if (this.palaceFlag) this.palaceFlag.flagMat.color.copy(PALACE_CITY).lerp(PALACE_TAKEN, this.palace.progress);
   }
 
   // กองที่ยืนรักษากำแพงที่ยึดแล้วรับคำสั่งใหม่รายกองได้ ไม่ต้องเปลี่ยนภารกิจทั้งด้าน
@@ -1976,8 +1977,8 @@ export class Battle {
         if (this.capT[s] >= CFG.captureHoldTime) {
           this.captured[s] = true;
           this.stats.capturedCount++;
-          this.citySides[s].flagMat.color.set(0x3d7ac0);
-          this.spawnSpark(sectionCenter(s), 'blue', 10, 4);
+          this.citySides[s].flagMat.color.set(TEAM_COLORS.attacker);
+          this.spawnSpark(sectionCenter(s), 'gold', 10, 4);
           this.shake = Math.max(this.shake, 0.7);
           this.onEvent('captured', { side: s });
           this.rearmArchersAfterCapture(s);

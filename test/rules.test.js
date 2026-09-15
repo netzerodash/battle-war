@@ -855,3 +855,29 @@ test('defender count labels group soldiers by where they really stand', () => {
   assert.equal(groups.inner1.count, 1);
   assert.equal(groups.wall2.y, CFG.walkY);
 });
+
+test('HUD gate status reports strength and state for every ring', async () => {
+  const { gateStatus } = await import('../src/ui.js');
+  const battle = {
+    gate: { open: false, breach: 0.25, progress: 0 },
+    ramUnderGate: () => null,
+    innerGates: [
+      { open: false, hp: 55, hpMax: 110, progress: 0, started: true },
+      { open: true, hp: 0, hpMax: 150, progress: 0, started: true },
+    ],
+  };
+  const outer = gateStatus(battle, 0);
+  assert.equal(outer.pct, 75);
+  assert.equal(outer.hit, true);
+  assert.equal(gateStatus(battle, 1).pct, 50);
+  assert.equal(gateStatus(battle, 2).open, true);
+});
+
+test('minimap draws north up and maps clicks back to the same world point', async () => {
+  const { worldToMinimap, minimapToWorld } = await import('../src/minimap.js');
+  const [px, py] = worldToMinimap(50, -80, 190);
+  assert.ok(py < 95, 'north should be drawn above the centre');
+  assert.ok(px > 95, 'east should be drawn right of the centre');
+  const [x, z] = minimapToWorld(px, py, 190);
+  assert.ok(Math.abs(x - 50) < 1e-9 && Math.abs(z + 80) < 1e-9);
+});
