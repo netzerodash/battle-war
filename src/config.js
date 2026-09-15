@@ -1,15 +1,24 @@
-// ค่าคงที่ของเกมทั้งหมด (ปรับดุลย์ที่นี่) — v3 "ยุทธศาสตร์การตีเมือง"
-export const CFG = {
-  wallHalf: 40,
-  wallThick: 8,
-  wallH: 14,
-  walkY: 14.3,
+// เมืองสามชั้นแบบวังต้องห้าม (นอก → ใน): half = ระยะจากกลางเมืองถึงหน้าในของกำแพง
+const RINGS = Object.freeze([
+  Object.freeze({ half: 64, thick: 8, h: 14 }), // กำแพงเมืองชั้นนอก — ปีนด้วยบันไดพาด มีบันไดในลงเมือง
+  Object.freeze({ half: 38, thick: 5, h: 9 }),  // กำแพงเมืองชั้นใน — ทุบประตูหรือพาดบันไดข้าม
+  Object.freeze({ half: 18, thick: 4, h: 7 }),  // กำแพงวังต้องห้าม — ด่านสุดท้ายก่อนลานวัง
+]);
+const OUTER = RINGS[0];
 
-  timeLimit: 600,          // 10 นาที — ทัพใหญ่ใช้เวลามากขึ้น
+// ค่าคงที่ของเกมทั้งหมด (ปรับดุลย์ที่นี่) — v4 "เมืองสามชั้น"
+export const CFG = {
+  rings: RINGS,
+  wallHalf: OUTER.half,
+  wallThick: OUTER.thick,
+  wallH: OUTER.h,
+  walkY: OUTER.h + 0.3,
+
+  timeLimit: 900,          // 15 นาที — เมืองใหญ่สามชั้นต้องใช้เวลาเดินทัพเข้าไปถึงวัง
   captureHoldTime: 5,
   captureSoldiersNeeded: 6,
 
-  spawnDist: 90,           // จุดตั้งทัพเริ่มเกม
+  spawnDist: OUTER.half + OUTER.thick + 50, // จุดตั้งทัพเริ่มเกม (พ้นระยะธนูกำแพง)
 
   // ---------- กองทัพฝ่ายโจมตี: large battle — เพิ่มกำลังพลเป็นสองเท่า ----------
   army: {
@@ -26,7 +35,7 @@ export const CFG = {
   unit: {
     spear: { hp: 6, dmg: 1, atkCd: 0.95, speed: 3.6, climb: 1.7 },
     shield: { hp: 7, dmg: 1, atkCd: 0.9, speed: 2.9, climb: 1.5, coverRadius: 4.2, coverChance: 0.65 },
-    atkArch: { hp: 3, dmg: 1, atkCd: 5.0, range: 64, projSpeed: 30, gravity: 10, standDist: 88, speed: 3.4 },
+    atkArch: { hp: 3, dmg: 1, atkCd: 5.0, range: 64, projSpeed: 30, gravity: 10, standDist: OUTER.half + OUTER.thick + 40, speed: 3.4 },
     cav: { hp: 7, dmg: 2, atkCd: 1.0, speed: 8.6 },
     ram: { crew: 6, crewHp: 5, ramHp: 240, batterRate: 0.02, speed: 1.7, rockDmg: 20 },
   },
@@ -65,9 +74,36 @@ export const CFG = {
     detachThreat: 36,           // ผู้บุกบนกำแพง >= 36 นาย = ความคุกคามสูง
   },
 
-  // กองสำรองในเมือง
-  reserveSquads: 200,
+  // กองสำรองในเมืองชั้นนอก (ยืนเป็นแถวรอบวงแหวนระหว่างกำแพงนอกกับกำแพงชั้นใน)
+  reserveSquads: 120,
   squadSize: 4,
+
+  // ทหารรักษาเมืองชั้นในและวัง — เก่งกว่าทหารกำแพงนอก ตั้งรับอยู่ในชั้นของตัวเอง
+  garrison: {
+    shield: { hp: 13, dmg: 1, atkCd: 1.1, speed: 2.2, coverRadius: 4, coverChance: 0.55 },
+    spear: { hp: 11, dmg: 2, atkCd: 1.3, speed: 2.5 },
+    cav: { hp: 11, dmg: 3, atkCd: 1.0, speed: 8.2, detectRange: 42 },
+    archer: { hp: 4, dmg: 1, cd: 2.3, range: 40 },
+    inner: { shields: 36, spears: 36, cav: 24, archersPerSide: 12 },
+    palace: { shields: 24, spears: 30, cav: 16, archersPerSide: 8 },
+  },
+
+  // ประตูชั้นใน: ทหารราบฟันประตูจากด้านนอกได้ (ไม่ต้องใช้รถทุบ) หรือคนที่ข้ามไปแล้วแงะเปิดจากด้านใน
+  innerGates: {
+    hp: [0, 110, 150],   // ตามลำดับชั้น (ชั้น 0 = ประตูเมืองนอก ใช้ระบบรถทุบเดิม)
+    halfWidth: 3.4,
+    hackRadius: 6,
+    hackRate: 0.3,       // ความเสียหายต่อวินาทีต่อทหาร 1 นาย
+    hackCap: 14,         // ฟันพร้อมกันได้ไม่เกินนี้ (หน้าประตูแคบ)
+    openRadius: 4,
+    insideBase: 0.1, insidePer: 0.06,
+  },
+
+  // ชัยชนะ: ยึดลานวังชั้นในสุด — ทหารเรามากกว่าทหารเมืองในลานวังต่อเนื่องจนแถบเต็ม
+  palace: { holdTime: 20, decayRate: 0.5, minHolders: 3 },
+
+  // บันไดพาดข้ามกำแพงชั้นใน
+  escalade: { plantTime: 1.4, maxClimbers: 3, climbFactor: 0.45 },
 
   // ม้าซอง (sally) — เมืองเปิดประตูส่งม้าออกไปถล่มเครื่องโจมตีแล้วถอย
   sortie: {
@@ -78,14 +114,15 @@ export const CFG = {
 
   // ประตูเมือง (ฝั่งใต้): เปิดได้ทั้งจากใน (แงะ) และนอก (รถทุบ)
   gate: {
-    frontPoint: 53.5,
-    insidePoint: 37,
+    frontPoint: OUTER.half + OUTER.thick + 5.5,
+    insidePoint: OUTER.half - 3,
     openRadius: 5.5,
     insideBase: 0.08, insidePer: 0.05,
     openerLimit: 20,
   },
 
   maxAssaultPerSide: 48,
+  stairAssault: { maxEnRoute: 16 }, // ผู้บุกในเมืองที่ขึ้นบันไดในพร้อมกันต่อด้าน (ไปกวาดทหารค้างบนกำแพง)
   descendAtOnce: 32,   // จำนวนลงบันไดในพร้อมกันต่อด้าน
 
   movement: {
@@ -108,6 +145,8 @@ export const CFG = {
 };
 
 export const SIDE_NAMES = ['เหนือ', 'ตะวันออก', 'ใต้', 'ตะวันตก'];
+export const GATE_NAMES = ['ประตูเมืองชั้นนอก', 'ประตูเมืองชั้นใน', 'ประตูวังต้องห้าม'];
+export const WALL_NAMES = ['กำแพงเมืองชั้นนอก', 'กำแพงเมืองชั้นใน', 'กำแพงวังต้องห้าม'];
 export const SIDE_CHARS = ['𝐍', '𝐄', '𝐒', '𝐖'];
 export const UNIT_LABEL = {
   spear: '🔴 หอกปีนกำแพง', shield: '🟤 พลโล่กำบัง', archer: '🟢 นักธนูกดกำแพง',

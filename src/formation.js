@@ -34,6 +34,22 @@ export function formationDestinations(companies, target, spacing = 14, formation
   });
 }
 
+// หลายกองมุ่งจุดเดียว: กองที่ใกล้สุดได้ศูนย์กลาง ที่เหลือวางชิดเป็นวงรอบ ๆ (ไม่แผ่เป็นแนวยาวจนล้นเมือง)
+export function compactDestinations(companies, target, spacing = 5) {
+  const ring = Math.ceil(Math.sqrt(companies.length));
+  const cells = [];
+  for (let x = -ring; x <= ring; x++) for (let z = -ring; z <= ring; z++) cells.push([x, z]);
+  cells.sort((a, b) => (a[0] ** 2 + a[1] ** 2) - (b[0] ** 2 + b[1] ** 2) || a[0] - b[0] || a[1] - b[1]);
+  const byDistance = companies.map((_, i) => i)
+    .sort((a, b) => companies[a].anchor.distanceToSquared(target) - companies[b].anchor.distanceToSquared(target));
+  const out = new Array(companies.length);
+  byDistance.forEach((index, rank) => {
+    const [x, z] = cells[rank];
+    out[index] = target.clone().add(new THREE.Vector3(x * spacing, 0, z * spacing));
+  });
+  return out;
+}
+
 // slot รายบุคคล: แถวหน้ากว้าง 5 นาย แถวหลังตามมา ไม่วิ่งเข้าพิกัดเดียวกัน
 export function unitSlot(index, count, spacing = 1.5, formation = 'line') {
   let cols;

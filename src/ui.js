@@ -39,6 +39,10 @@ export function buildHUD() {
     reserves: document.getElementById('hud-reserves'),
     gateBar: document.querySelector('#hud-gate .capbar > div'),
     gateText: document.getElementById('hud-gate-text'),
+    innerGateBars: [1, 2].map((ring) => document.querySelector(`#hud-inner .capbar.gate${ring} > div`)),
+    innerGateTexts: [1, 2].map((ring) => document.getElementById(`hud-gate${ring}-text`)),
+    palaceBar: document.querySelector('#hud-palace .capbar > div'),
+    palaceText: document.getElementById('hud-palace-text'),
     selText: document.getElementById('hud-sel-text'),
     tacticalStatus: document.getElementById('hud-tactical-status'),
   };
@@ -63,8 +67,27 @@ export function updateHUD(els, battle) {
       : battle.gate.progress > 0
         ? `กำลังเปิดจากด้านใน ${Math.round(battle.gate.progress * 100)}%`
         : 'ความแข็งแรง 100%';
-  els.objective.textContent = `ฝ่ายเมืองเหลือ ${gi.defendersAlive}/${gi.defendersInitial} · ยึดกำแพง ${gi.capturedCount}/4`;
-  els.reserves.textContent = `กองสำรองเมือง ${gi.reserves} · ประตู: ${gateText}`;
+  const palacePct = Math.round(gi.palace.progress * 100);
+  els.objective.textContent = `🏯 ยึดลานวัง ${palacePct}% · ยึดกำแพงนอก ${gi.capturedCount}/4 · ฝ่ายเมืองเหลือ ${gi.defendersAlive}/${gi.defendersInitial}`;
+  els.reserves.textContent = `กองสำรองเมืองนอก ${gi.reserves} · องครักษ์ชั้นใน/วัง ${gi.garrison}`;
+  gi.innerGates.forEach((g, i) => {
+    const hpPct = Math.round((g.hp / g.hpMax) * 100);
+    if (els.innerGateTexts[i]) {
+      els.innerGateTexts[i].textContent = g.open ? 'เปิดแล้ว!'
+        : g.progress > 0 ? `กำลังแงะจากด้านใน ${Math.round(g.progress * 100)}% · ความแข็งแรง ${hpPct}%`
+          : g.started ? `กำลังถูกฟัน · ความแข็งแรง ${hpPct}%` : `ปิด · ความแข็งแรง ${hpPct}%`;
+    }
+    if (els.innerGateBars[i]) {
+      els.innerGateBars[i].style.width = `${g.open ? 0 : hpPct}%`;
+      els.innerGateBars[i].classList.toggle('damaged', g.hp < g.hpMax && !g.open);
+    }
+  });
+  if (els.palaceBar) els.palaceBar.style.width = `${palacePct}%`;
+  if (els.palaceText) {
+    els.palaceText.textContent = gi.palace.atk > 0 || palacePct > 0
+      ? `${palacePct}% · ในลาน: เรา ${gi.palace.atk} / องครักษ์ ${gi.palace.def}${gi.palace.atk > gi.palace.def && gi.palace.atk >= CFG.palace.minHolders ? ' — กำลังยึด!' : ' — ต้องมีคนมากกว่า'}`
+      : `ยังไม่มีทหารเราในลานวัง (ต้องยืนครบ ${CFG.palace.holdTime} วิ)`;
+  }
   els.gateBar.style.width = `${battle.gate.open ? 0 : (battle.gate.breach > 0 ? gateHp : Math.round((1 - battle.gate.progress) * 100))}%`;
   els.gateBar.classList.toggle('damaged', battle.gate.breach > 0 && !battle.gate.open);
   els.gateText.textContent = battle.gate.open ? 'เปิดแล้ว — ทหารทุกกองเข้าทางประตูได้' : gateText;
@@ -124,9 +147,9 @@ export function toast(msg, cls = '') {
 // ---------- จอจบศึก ----------
 export function showEnd(data) {
   const titles = {
-    win: ['🏆 เมืองแตกแล้ว!', 'ประตูเปิด ทัพเมืองหมดสิ้น — เมืองหลวงเป็นของเจ้า'],
-    lose_dead: ['💀 ทัพหมดสิ้น...', 'กองร้อยทั้งหมดล้ม — ลองใหม่: รุมหลายด้านพร้อมกัน แล้วใช้กองม้าเก็บกวาด'],
-    lose_time: ['⌛ หมดเวลา — ถอนทัพ!', `ศึกยืดเยื้อเกิน ${Math.round(CFG.timeLimit / 60)} นาที ฝ่ายเมืองรอกำลังเสริมมาถึง`],
+    win: ['🏆 ยึดวังต้องห้ามสำเร็จ!', 'ธงทัพเจ้าปักกลางลานวังชั้นในสุด — ราชธานีเป็นของเจ้า'],
+    lose_dead: ['💀 ทัพหมดสิ้น...', 'กองร้อยทั้งหมดล้ม — ลองใหม่: เจาะกำแพงนอกให้แตกก่อน แล้วรวมพลฟันประตูชั้นในทีละชั้น'],
+    lose_time: ['⌛ หมดเวลา — ถอนทัพ!', `ศึกยืดเยื้อเกิน ${Math.round(CFG.timeLimit / 60)} นาทีโดยยังยึดลานวังไม่ได้ — ฝ่ายเมืองรอกำลังเสริมมาถึง`],
     lose_abort: ['🏳️ ยอมแพ้', 'ถอนทัพกลับแคมป์'],
   };
   const [title, sub] = titles[data.result] || ['จบศึก', ''];
@@ -144,7 +167,8 @@ export function showEnd(data) {
   const defPct = Math.round((s.defendersTotal / Math.max(1, s.defendersInitial)) * 100);
   document.getElementById('end-stats').innerHTML = `
     เวลาที่ใช้: <b>${fmtTime(data.time)}</b><br>
-    กำแพงที่ยึดได้: <b>${data.captured.filter(Boolean).length} / 4</b> ด้าน · ประตูเมือง: <b>${data.gateOpen ? 'เปิดแล้ว' : 'ยังปิด'}</b><br>
+    กำแพงนอกที่ยึดได้: <b>${data.captured.filter(Boolean).length} / 4</b> ด้าน · ประตูที่ฝ่าได้: <b>${[data.gateOpen, ...(data.innerGatesOpen || [])].filter(Boolean).length} / 3</b> ชั้น<br>
+    ยึดลานวัง: <b>${Math.round((data.palaceProgress || 0) * 100)}%</b><br>
     ทหารเราที่เหลือ: <b>${s.attackersAlive}</b> / ${deployed} นาย (${alivePct}%)<br>
     ทหารเมืองที่เหลือ: <b>${s.defendersTotal}</b> / ${s.defendersInitial} นาย (${defPct}%) — ทำลายไป <b>${s.kills}</b><br>
     หินที่ฝ่ายเมืองเหวี่ยงใส่เรา: <b>${s.rocksUsed}</b> ก้อน`;

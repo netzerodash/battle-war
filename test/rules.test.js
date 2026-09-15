@@ -1,26 +1,43 @@
 import test from 'node:test';
+globalThis.window ??= {}; // เสียงสังเคราะห์เรียก window เฉพาะตอนเล่นเสียง — ในเทสต์ไม่มีเบราว์เซอร์
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { battleOutcome, canUnitClimb } from '../src/rules.js';
+import { battleOutcome, canUnitClimb, palaceProgressStep } from '../src/rules.js';
 import { formationDestinations, unitSlot } from '../src/formation.js';
-import { gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS } from '../src/world.js';
+import {
+  gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS,
+  constrainToRegion, regionOf, classifyOrderPoint, gateFrontPoint, gateInsidePoint, RINGS,
+} from '../src/world.js';
 import { CFG, mulberry32 } from '../src/config.js';
-import { Battle, orderVisual } from '../src/battle.js';
+import { Battle, orderVisual, cityRallyPoint } from '../src/battle.js';
 import { buildCity, gateDoorAngle } from '../src/city.js';
 import { assaultRoute } from '../src/navigation.js';
-import { fieldRoute, routeLength } from '../src/navigation.js';
+import { fieldRoute, routeLength, routeBetween } from '../src/navigation.js';
 import { createOrder, ORDER_KIND, orderKindFromContext } from '../src/orders.js';
 import { SpatialHash } from '../src/spatial-hash.js';
 import { EngagementRegistry } from '../src/engagement.js';
-import { DefenseSide, ReserveForce } from '../src/defense.js';
+import { DefenseSide, ReserveForce, Garrison } from '../src/defense.js';
 import { chooseTacticalTarget, targetScore } from '../src/tactical-ai.js';
 import { BATTLEFIELD_CLEAR_RADIUS, mountainSpec } from '../src/scene.js';
 import { Company } from '../src/company.js';
 
-test('victory requires both no defenders and an open gate', () => {
-  const base = { defendersAlive: 0, attackersAlive: 1, time: 10, timeLimit: 20 };
-  assert.equal(battleOutcome({ ...base, gateOpen: false }), null);
-  assert.equal(battleOutcome({ ...base, gateOpen: true }), 'win');
+test('victory comes from holding the innermost palace courtyard, not from wiping out the city', () => {
+  const base = { attackersAlive: 10, time: 10, timeLimit: 20 };
+  assert.equal(battleOutcome({ ...base, palaceProgress: 0.99 }), null);
+  assert.equal(battleOutcome({ ...base, palaceProgress: 1 }), 'win');
+  assert.equal(battleOutcome({ ...base, attackersAlive: 0 }), 'lose_dead');
+  assert.equal(battleOutcome({ ...base, time: 21 }), 'lose_time');
+});
+
+test('palace progress only advances while attackers outnumber the guards in the courtyard', () => {
+  const opts = CFG.palace;
+  assert.ok(palaceProgressStep(0, 5, 2, 1, opts) > 0);
+  assert.equal(palaceProgressStep(0, 5, 5, 1, opts), 0);
+  assert.equal(palaceProgressStep(0, opts.minHolders - 1, 0, 1, opts), 0);
+  assert.ok(palaceProgressStep(0.5, 1, 4, 1, opts) < 0.5, 'contested courtyard slowly loses progress');
+  let p = 0;
+  for (let t = 0; t < opts.holdTime + 0.5; t += 0.5) p = palaceProgressStep(p, 10, 0, 0.5, opts);
+  assert.equal(p, 1);
 });
 
 test('mission RNG repeats exactly for the same seed', () => {
@@ -28,14 +45,16 @@ test('mission RNG repeats exactly for the same seed', () => {
   assert.deepEqual(Array.from({ length: 20 }, a), Array.from({ length: 20 }, b));
 });
 
-test('large battle doubles both starting armies', () => {
+test('starting armies keep their intended size across the three-ring city', () => {
   const attackerInfantry = CFG.army.composition.length * 4 * 10;
   const attackerRams = CFG.army.ramCompanies * CFG.unit.ram.crew;
   const attackerCavalry = CFG.army.cavalryCompanies * CFG.army.cavalryPerCompany;
+  const guards = (plan) => plan.shields + plan.spears + plan.cav + plan.archersPerSide * 4;
   const defenders = 4 * (CFG.wallMelee + CFG.wallArchers + CFG.rockLogi.carriers)
-    + CFG.reserveSquads * CFG.squadSize;
+    + CFG.reserveSquads * CFG.squadSize
+    + guards(CFG.garrison.inner) + guards(CFG.garrison.palace);
   assert.equal(attackerInfantry + attackerRams + attackerCavalry, 1956);
-  assert.equal(defenders, 1312);
+  assert.equal(defenders, 1238);
 });
 
 test('move and attack orders use unmistakably different map symbols', () => {
@@ -88,7 +107,7 @@ test('gate route follows the current position even when the old assault side is 
 
 test('open gate routing chooses the shorter valid side around the wall', () => {
   const from = new THREE.Vector3(34, 0, -88);
-  const target = new THREE.Vector3(0, 0, 12);
+  const target = cityRallyPoint();
   const route = fieldRoute(from, target, [0, 0, 0, 0], true);
   assert.ok(route[0].x > 0, 'the closer east corner should be used');
   const c = CFG.wallHalf + CFG.wallThick + 4;
@@ -101,23 +120,31 @@ test('open gate routing chooses the shorter valid side around the wall', () => {
 });
 
 test('cavalry outside an open gate keeps a portal route until it physically enters', () => {
-  const cavalry = {
-    ctype: 'cav', aliveSoldiers: [{ chargeReady: false }], formation: 'line', stance: 'aggressive',
-    mode: 'idle', enteredCity: false, pendingCityTarget: null, waitingGate: false,
-    anchor: new THREE.Vector3(26, 0, -90),
-    battle: { gate: { open: true }, time: 1, onEvent() {} },
-    setTactics: Company.prototype.setTactics,
-    buildRideRoute: Company.prototype.buildRideRoute,
-    routeThreats() { return [0, 0, 0, 0]; },
-  };
-  assert.equal(Company.prototype.orderRide.call(cavalry, new THREE.Vector3(0, 0, 10)), true);
+  const battle = { rng: () => 0.5, group: new THREE.Group(), gate: { open: true }, time: 1, onEvent() {}, wallThreats: () => [0, 0, 0, 0] };
+  const cavalry = new Company(0, 0, 'cav', new THREE.Vector3(26, 0, -90), battle);
+  assert.equal(cavalry.orderRide(cityRallyPoint()), true);
   assert.equal(cavalry.enteredCity, false);
   assert.ok(cavalry.waypoints.length >= 4);
   assert.ok(cavalry.waypoints[0].x > 0);
+  assert.equal(cavalry.pendingGate, null);
+});
+
+test('cavalry ordered into the palace waits at the first closed inner gate, then rides on', () => {
+  const events = [];
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), gate: { open: true }, time: 1, onEvent: (t, d) => events.push([t, d]),
+    wallThreats: () => [0, 0, 0, 0], gatesOpen: () => [true, false, false],
+  };
+  const cavalry = new Company(0, 2, 'cav', cityRallyPoint(), battle);
+  for (const s of cavalry.soldiers) s.zone = 'city';
+  assert.equal(cavalry.orderRide(new THREE.Vector3(0, 0, 0)), true);
+  assert.equal(cavalry.pendingGate, 1);
+  assert.ok(cavalry.waypoints.at(-1).distanceTo(gateFrontPoint(1)) < 0.01);
+  assert.equal(events.at(-1)[0], 'cav_wait_gate');
 });
 
 test('field units cannot remain inside a closed wall', () => {
-  const p = new THREE.Vector3(45, 0, 3);
+  const p = new THREE.Vector3(CFG.wallHalf + 3, 0, 3);
   constrainFieldOutsideWall(p, false);
   assert.ok(Math.max(Math.abs(p.x), Math.abs(p.z)) > CFG.wallHalf + CFG.wallThick);
 });
@@ -180,12 +207,24 @@ test('fully opened gate leaves a clear passage through the south wall', () => {
   city.doorR.rotation.y = -gateDoorAngle(1);
   scene.updateMatrixWorld(true);
   const ray = new THREE.Raycaster(
-    new THREE.Vector3(0, 4, 60),
+    new THREE.Vector3(0, 4, CFG.wallHalf + CFG.wallThick + 8),
     new THREE.Vector3(0, 0, -1),
     0,
-    24,
+    CFG.wallThick + 12,
   );
   assert.equal(ray.intersectObject(city.group, true).length, 0);
+});
+
+test('opened inner gates leave a clear passage through each inner ring', () => {
+  const scene = new THREE.Scene();
+  const city = buildCity(scene);
+  for (const g of city.gates) { g.doorL.rotation.y = gateDoorAngle(1); g.doorR.rotation.y = -gateDoorAngle(1); }
+  scene.updateMatrixWorld(true);
+  for (let ring = 1; ring < RINGS.length; ring++) {
+    const R = RINGS[ring];
+    const ray = new THREE.Raycaster(new THREE.Vector3(0, 3, R.half + R.thick + 4), new THREE.Vector3(0, 0, -1), 0, R.thick + 6);
+    assert.equal(ray.intersectObject(city.group, true).length, 0, `ring ${ring} gate passage is blocked`);
+  }
 });
 
 test('inner stairs have a walkable slope instead of a near-vertical ramp', () => {
@@ -234,7 +273,7 @@ test('cross-side assault routes stay outside the wall until final approach', () 
   ];
   for (let fromSide = 0; fromSide < 4; fromSide++) for (let toSide = 0; toSide < 4; toSide++) {
     if (fromSide === toSide) continue;
-    const target = new THREE.Vector3().addScaledVector(SIDE_VECS[toSide].n, 54);
+    const target = new THREE.Vector3().addScaledVector(SIDE_VECS[toSide].n, CFG.wallHalf + CFG.wallThick + 5);
     const route = assaultRoute(starts[fromSide], toSide, target);
     assert.ok(route.length >= 2, `route ${fromSide}->${toSide} needs safe perimeter waypoints`);
     for (const p of route.slice(0, -1)) {
@@ -264,7 +303,7 @@ test('general field movement routes around the closed wall', () => {
   for (const p of route.slice(0, -1)) {
     assert.ok(Math.max(Math.abs(p.x), Math.abs(p.z)) > CFG.wallHalf + CFG.wallThick);
   }
-  assert.ok(routeLength(from, route) < 400);
+  assert.ok(routeLength(from, route) < CFG.wallHalf * 8, 'route should not take an absurd detour around the city');
 });
 
 test('spatial hash only returns nearby units', () => {
@@ -314,7 +353,7 @@ test('rock carriers have distinct visible staging positions', () => {
 });
 
 test('routes leaving the city use the open gate portal', () => {
-  const from = new THREE.Vector3(0, 0, 0);
+  const from = new THREE.Vector3(0, 0, CFG.wallHalf - 8);
   const target = new THREE.Vector3(0, 0, -90);
   const route = fieldRoute(from, target, [0, 0, 0, 0], true);
   assert.ok(route[0].distanceTo(new THREE.Vector3(0, 0, CFG.gate.insidePoint)) < 0.01);
@@ -514,9 +553,231 @@ test('opening the gate automatically reroutes grounded south assault troops into
   const archer = make({ ctype: 'archer' });
   const climbing = make({ state: 'climbing', orderable() { return false; } });
   const otherWall = make({ side: 1 });
-  const battle = { companies: [south, archer, climbing, otherWall] };
+  const battle = { companies: [south, archer, climbing, otherWall], rerouteBlockedCompanies: Battle.prototype.rerouteBlockedCompanies };
   const count = Battle.prototype.routeOpenGateAttackers.call(battle);
   assert.equal(count, 1);
   assert.equal(entered[0].company, south);
   assert.ok(Math.max(Math.abs(entered[0].point.x), Math.abs(entered[0].point.z)) < CFG.wallHalf);
+});
+
+test('city march leaves fighting soldiers to melee combat and still completes', () => {
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), gate: { open: true }, time: 0,
+    wallThreats: () => [0, 0, 0, 0], onEvent() {}, onInfEnteredCity() {}, onInfLeftCity() {},
+  };
+  const company = new Company(0, 2, 'spear', new THREE.Vector3(0, 0, 55), battle);
+  for (const s of company.soldiers) s.zone = 'city';
+  assert.equal(company.orderCity(new THREE.Vector3(0, 0, 50)), true);
+  const fighter = company.soldiers[3];
+  fighter.pos.set(20, 0, 58);
+  const before = fighter.pos.clone();
+  for (let i = 0; i < 200; i++) {
+    fighter.inCombat = true; // melee loop ตั้งค่านี้ทุกเฟรมที่ทหารกำลังประชิดศัตรู
+    battle.time += 0.1;
+    company.update(0.1);
+  }
+  assert.ok(fighter.pos.equals(before), 'company dragged a soldier out of his fight');
+  assert.equal(company.state, 'holdAt');
+  assert.equal(fighter.zone, 'city');
+});
+
+test('entering the city is shown as an attack order', () => {
+  assert.equal(orderVisual('city').kind, 'attack');
+});
+
+test('city orders pack every company around the clicked point inside the walls', () => {
+  const companies = Array.from({ length: 30 }, (_, i) => ({ anchor: new THREE.Vector3(i * 3 - 45, 0, 90) }));
+  const points = Battle.prototype.cityOrderDestinations.call({}, companies, new THREE.Vector3(5, 0, 39));
+  assert.equal(points.length, 30);
+  for (const p of points) {
+    assert.ok(Math.max(Math.abs(p.x), Math.abs(p.z)) <= CFG.wallHalf - 4, 'destination left the city interior');
+    assert.ok(p.distanceTo(new THREE.Vector3(5, 0, 36)) < 30, 'destination strayed far from the click');
+  }
+});
+
+test('wall defender counts follow real positions from any side and ignore the city', () => {
+  const unit = (zone, x, y, z) => ({ alive: true, zone, stair: null, pos: new THREE.Vector3(x, y, z) });
+  const battle = {
+    wallDefenderCounts: [9, 9, 9, 9],
+    defenses: [
+      { melee: [unit('wall', 0, CFG.walkY, CFG.wallHalf + 4), unit('city', 0, 0, CFG.wallHalf - 10)], archers: [] },
+      { melee: [], archers: [unit('wall', CFG.wallHalf + 4, CFG.walkY, 0)] },
+    ],
+  };
+  Battle.prototype.refreshWallDefenders.call(battle);
+  assert.deepEqual(battle.wallDefenderCounts, [0, 1, 1, 0]);
+});
+
+test('idle city attackers climb the inner stair toward defenders left on a wall', () => {
+  const battle = {
+    wallDefenderCounts: [0, 0, 3, 0],
+    stairAssaultEnRoute: [0, 0, 0, 0],
+    engagements: new EngagementRegistry(),
+    sendUpInnerStair: Battle.prototype.sendUpInnerStair,
+  };
+  const spear = { kind: 'inf', pos: new THREE.Vector3(0, 0, 10), state: 'order' };
+  const horse = { kind: 'cav', pos: new THREE.Vector3(0, 0, 10), state: 'order' };
+  assert.equal(Battle.prototype.autoClimbToWall.call(battle, spear), true);
+  assert.equal(spear.state, 'toStairUp');
+  assert.equal(spear.stairClimbSide, 2);
+  assert.equal(Battle.prototype.autoClimbToWall.call(battle, horse), false);
+});
+
+test('an attacker reaching the top of an inner stair joins the wall fight', () => {
+  const s = { faction: 'atk', zone: 'stair', state: 'stairUp', pos: new THREE.Vector3(), wallObjectiveSide: 1 };
+  const battle = { cityAttackers: new Set([s]), wallFighters: [0, 1, 2, 3].map(() => new Set()) };
+  Battle.prototype.onStairTopArrived.call(battle, 0, s);
+  assert.equal(s.zone, 'wall');
+  assert.equal(battle.wallFighters[0].has(s), true);
+  assert.equal(battle.cityAttackers.has(s), false);
+  assert.equal(s.wallSupport, true);
+  assert.ok(s.waypoints.at(-1).distanceTo(wallRoute(0, 1).at(-1)) < 0.001);
+});
+
+test('inner-stair climbers head back down once no wall defender remains', () => {
+  const s = { alive: true, stair: null, wallSupport: true, wallObjectiveSide: 2, stairAssault: true, pos: new THREE.Vector3(0, CFG.walkY, CFG.wallHalf + 4) };
+  const battle = {
+    wallFighters: [new Set(), new Set(), new Set([s]), new Set()],
+    wallDefenderCounts: [0, 0, 0, 0],
+    nearestDefendedWall: Battle.prototype.nearestDefendedWall,
+  };
+  Battle.prototype.updateWallSupport.call(battle);
+  assert.equal(s.wallSupport, false);
+  assert.equal(s.forceCityDescent, true);
+});
+
+test('a broken ladder never pulls soldiers who already reached the wall back into the ladder queue', () => {
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), gate: { open: false }, time: 0, nextLadderId: 0,
+    wallThreats: () => [0, 0, 0, 0], assignPlantSlot: () => 0, onEvent() {},
+  };
+  const company = new Company(0, 1, 'spear', new THREE.Vector3(90, 0, 0), battle);
+  assert.equal(company.orderAssault(1), true);
+  const onWall = company.soldiers[0];
+  onWall.zone = 'wall';
+  onWall.state = 'toStair';
+  company.onLadderBroken();
+  assert.equal(onWall.state, 'toStair');
+  company.resetLadderTo(1, 0);
+  company.plantLadder();
+  assert.equal(onWall.state, 'toStair');
+  assert.equal(company.soldiers[1].state, 'waitBase');
+
+  // ทุกคนพ้นพื้นแล้ว (บนกำแพง/ในเมือง) → กองต้องกลับมาสั่งได้ ไม่ค้างสถานะ climbing
+  for (const s of company.soldiers) { s.zone = s === onWall ? 'wall' : 'city'; s.state = 'order'; }
+  company.updateClimbing(0.1);
+  assert.equal(company.state, 'done');
+  assert.equal(company.orderable(), true);
+});
+
+test('reserve squads stop climbing toward a wall that has just been captured', () => {
+  const soldier = { alive: true, inCombat: false, stair: null, pos: new THREE.Vector3(), state: 'order' };
+  const sq = { state: 'toStair', side: 2, soldiers: [soldier] };
+  ReserveForce.prototype.updateSquad.call({ battle: { captured: [false, false, true, false] } }, sq);
+  assert.equal(sq.state, 'idle');
+});
+
+test('routes into the palace pass every gate in order and stop at the first closed one', () => {
+  const from = cityRallyPoint();
+  const target = new THREE.Vector3(0, 0, -4);
+  const blocked = routeBetween(from, target, [0, 0, 0, 0], [true, false, false]);
+  assert.equal(blocked.blockedAt, 1);
+  assert.ok(blocked.at(-1).distanceTo(gateFrontPoint(1)) < 0.01);
+  const open = routeBetween(from, target, [0, 0, 0, 0], [true, true, true]);
+  assert.equal(open.blockedAt, undefined);
+  const idx = (p) => open.findIndex((q) => q.distanceTo(p) < 0.01);
+  assert.ok(idx(gateFrontPoint(1)) < idx(gateInsidePoint(1)));
+  assert.ok(idx(gateInsidePoint(1)) < idx(gateFrontPoint(2)));
+  assert.ok(idx(gateFrontPoint(2)) < idx(gateInsidePoint(2)));
+  assert.equal(regionOf(open.at(-1)), 3);
+});
+
+test('routes inside the outer city walk around the inner wall instead of through it', () => {
+  const from = new THREE.Vector3(0, 0, -55);
+  const target = cityRallyPoint();
+  const route = routeBetween(from, target, [0, 0, 0, 0], [true, false, false]);
+  let prev = from;
+  const R = RINGS[1];
+  for (const p of route) {
+    for (let k = 1; k < 20; k++) {
+      const x = prev.x + (p.x - prev.x) * (k / 20), z = prev.z + (p.z - prev.z) * (k / 20);
+      assert.ok(Math.max(Math.abs(x), Math.abs(z)) >= R.half + R.thick, 'route cuts through the inner wall');
+    }
+    prev = p;
+  }
+});
+
+test('ground units stay in their ring unless they pass through an open gate', () => {
+  const R = RINGS[1];
+  const wallSide = new THREE.Vector3(10, 0, R.half + R.thick - 1);
+  constrainToRegion(wallSide, 1, [true, true, false]);
+  assert.ok(wallSide.z >= R.half + R.thick + 0.8, 'city unit was left inside the inner wall');
+  const closedLane = new THREE.Vector3(0, 0, R.half + 1);
+  constrainToRegion(closedLane, 1, [true, false, false]);
+  assert.ok(closedLane.z >= R.half + R.thick + 0.8, 'city unit walked through a closed inner gate');
+  const openLane = new THREE.Vector3(0, 0, R.half + 1);
+  constrainToRegion(openLane, 1, [true, true, false]);
+  assert.ok(Math.abs(openLane.z - (R.half + 1)) < 0.01, 'open gate lane should be passable');
+  const inner = new THREE.Vector3(0, 0, R.half + 3);
+  constrainToRegion(inner, 2, [true, false, false]);
+  assert.ok(inner.z <= R.half - 0.8, 'inner-city unit pushed back inside its own ring');
+});
+
+test('right-clicking an inner wall orders an escalade, clicking its gate orders a march', () => {
+  const R = RINGS[1];
+  const onWall = classifyOrderPoint(new THREE.Vector3(R.half + R.thick / 2, 0, 6));
+  assert.equal(onWall.type, 'escalade');
+  assert.equal(onWall.ring, 1);
+  assert.equal(onWall.side, 1);
+  assert.equal(classifyOrderPoint(new THREE.Vector3(0, 0, R.half + R.thick / 2)).type, 'city');
+});
+
+test('infantry escalade a closed inner wall and land in the inner city', () => {
+  const events = [];
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), gate: { open: true }, time: 0,
+    wallThreats: () => [0, 0, 0, 0], gatesOpen: () => [true, false, false],
+    onEvent: (t) => events.push(t), onInfEnteredCity() {}, onInfLeftCity() {},
+  };
+  const company = new Company(0, 2, 'spear', cityRallyPoint(), battle);
+  for (const s of company.soldiers) s.zone = 'city';
+  const R = RINGS[1];
+  assert.equal(company.orderEscalade(1, new THREE.Vector3(20, 0, R.half + R.thick / 2)), true);
+  for (let i = 0; i < 900 && company.state !== 'holdAt'; i++) { battle.time += 0.1; company.update(0.1); }
+  assert.equal(company.state, 'holdAt');
+  assert.equal(company.escalade, null);
+  assert.ok(company.soldiers.every((s) => s.zone === 'inner'), 'every soldier should be over the wall');
+  assert.ok(company.soldiers.every((s) => regionOf(s.pos) === 2));
+  assert.ok(events.includes('escalade_start'));
+});
+
+test('infantry hacking a closed inner gate break it open and release waiting companies', () => {
+  const front = gateFrontPoint(1);
+  const hackers = Array.from({ length: 10 }, () => ({
+    alive: true, kind: 'inf', zone: 'city', inCombat: false, pos: front.clone(), facePoint() {},
+  }));
+  const events = [];
+  let rerouted = null;
+  const battle = {
+    innerGates: [{ ring: 1, open: false, hp: 5, hpMax: 5, progress: 0, anim: 0, started: false, hackT: 0 }],
+    gateDoors: [], cityAttackers: new Set(hackers), rng: () => 0.5, shake: 0,
+    spawnSpark() {}, onEvent: (t, d) => events.push([t, d]),
+    rerouteBlockedCompanies(ring) { rerouted = ring; return 0; },
+  };
+  for (let i = 0; i < 20 && !battle.innerGates[0].open; i++) Battle.prototype.updateInnerGates.call(battle, 0.5);
+  assert.equal(battle.innerGates[0].open, true);
+  assert.equal(rerouted, 1);
+  assert.deepEqual(events.map((e) => e[0]), ['inner_gate_attack', 'inner_gate_open']);
+});
+
+test('inner garrisons deploy inside their own ring with archers on the inner walls', () => {
+  const garrison = new Garrison({ rng: () => 0.5, group: new THREE.Group() });
+  const guards = (plan) => plan.shields + plan.spears + plan.cav + plan.archersPerSide * 4;
+  assert.equal(garrison.aliveCount(), guards(CFG.garrison.inner) + guards(CFG.garrison.palace));
+  for (const s of garrison.soldiers) {
+    assert.equal(regionOf(s.pos), s.zone === 'inner' ? 2 : 3, `${s.utype} deployed outside its ring`);
+  }
+  assert.ok(garrison.soldiers.some((s) => s.utype === 'guardCav' && s.kind === 'cav'));
+  assert.ok(garrison.soldiers.some((s) => s.utype === 'guardShield'));
+  assert.ok(garrison.archers.every((a) => a.zone === 'wall2' || a.zone === 'wall3'));
 });

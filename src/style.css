@@ -151,6 +151,11 @@ body:not(.touch) #touchbar { display: none !important; }
 .capbar > div { height: 100%; background: var(--blue); width: 0%; transition: width .2s; }
 #hud-gate .capbar > div { background: linear-gradient(90deg, #b52e2e, #e56a3a); }
 #hud-gate .capbar > div.damaged { box-shadow: 0 0 8px rgba(229, 106, 58, .7); }
+#hud-inner .capbar > div { width: 100%; background: linear-gradient(90deg, #9b3326, #d9a441); }
+#hud-inner .capbar > div.damaged { box-shadow: 0 0 8px rgba(217, 164, 65, .7); }
+#hud-palace .capbar { height: 9px; }
+#hud-palace .capbar > div { background: linear-gradient(90deg, #d9a441, #3d7ac0); box-shadow: 0 0 10px rgba(61, 122, 192, .6); }
+#hud-palace .gline b { color: #f0d27a; }
 
 .hud-global {
   position: fixed; right: 12px; top: 76px;

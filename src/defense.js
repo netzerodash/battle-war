@@ -5,13 +5,25 @@ import { Soldier } from './soldier.js';
 import { rockGeo, rockMat } from './models.js';
 import { sfx } from './audio.js';
 
-const CORNER_BETWEEN = {
-  '0-1': [42, -42], '1-2': [42, 42], '2-3': [-42, 42], '0-3': [-42, -42],
-};
 function cornerBetween(a, b) {
-  const key = Math.min(a, b) + '-' + Math.max(a, b);
-  const [x, z] = CORNER_BETWEEN[key];
-  return new THREE.Vector3(x, CFG.walkY, z);
+  const c = CFG.wallHalf + 2;
+  const signs = { '0-1': [1, -1], '1-2': [1, 1], '2-3': [-1, 1], '0-3': [-1, -1] };
+  const [sx, sz] = signs[Math.min(a, b) + '-' + Math.max(a, b)];
+  return new THREE.Vector3(sx * c, CFG.walkY, sz * c);
+}
+
+// กระจายตำแหน่ง n จุดตามแนวกำแพงช่วง ±halfSpan โดยเว้นช่วงกลาง ±gap (ซุ้มประตู)
+function spreadAlong(n, halfSpan, gap = 0) {
+  if (gap <= 0) return Array.from({ length: n }, (_, i) => -halfSpan + (i + 0.5) * ((halfSpan * 2) / n));
+  const perSide = Math.ceil(n / 2);
+  const width = halfSpan - gap;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const sign = i % 2 ? 1 : -1;
+    const k = Math.floor(i / 2);
+    out.push(sign * (gap + (k + 0.5) * (width / perSide)));
+  }
+  return out;
 }
 
 // ฝ่ายรับประจำกำแพงด้านเดียว + โลจิสติกส์หิน + AI ผู้บัญชาการ
@@ -38,16 +50,18 @@ export class DefenseSide {
     battle.group.add(this.roller.visual);
 
     const meleePerRank = 40;
+    const meleeSpan = CFG.wallHalf - 10;
     for (let i = 0; i < cfg.melee; i++) {
       const rank = Math.floor(i / meleePerRank);
       const indexInRank = i % meleePerRank;
       const rankCount = Math.min(meleePerRank, cfg.melee - rank * meleePerRank);
-      const t = -33 + (indexInRank + 0.5) * (66 / rankCount);
-      this.melee.push(this.makeSoldier('def', CFG.defender, worldPoint(side, t, 45.9 - rank * 2.1, CFG.walkY)));
+      const t = -meleeSpan + (indexInRank + 0.5) * ((meleeSpan * 2) / rankCount);
+      this.melee.push(this.makeSoldier('def', CFG.defender, worldPoint(side, t, CFG.wallHalf + 5.9 - rank * 2.1, CFG.walkY)));
     }
+    const archerSpan = CFG.wallHalf - 8;
     for (let i = 0; i < cfg.archers; i++) {
-      const t = -35 + (i + 0.5) * (70 / cfg.archers);
-      const s = this.makeSoldier('archer', { hp: CFG.archerStat.hp, dmg: CFG.archerStat.dmg, atkCd: CFG.archerStat.atkCd }, worldPoint(side, t, 44.7, CFG.walkY));
+      const t = -archerSpan + (i + 0.5) * ((archerSpan * 2) / cfg.archers);
+      const s = this.makeSoldier('archer', { hp: CFG.archerStat.hp, dmg: CFG.archerStat.dmg, atkCd: CFG.archerStat.atkCd }, worldPoint(side, t, CFG.wallHalf + 4.7, CFG.walkY));
       s.cd = cfg.archerCd * (0.5 + battle.rng());
       this.archers.push(s);
     }
@@ -105,9 +119,9 @@ export class DefenseSide {
     // Keep the doubled logistics crew in one visible line beside the inner wall.
     // This also leaves the central courtyard free for the reserve formation.
     const lateral = (slot - (CFG.rockLogi.carriers - 1) / 2) * 1.8;
-    return worldPoint(this.side, lateral, 37.2, 0);
+    return worldPoint(this.side, lateral, CFG.wallHalf - 2.8, 0);
   }
-  pilePoint() { return worldPoint(this.side, 2.5, 44.5, CFG.walkY); }
+  pilePoint() { return worldPoint(this.side, 2.5, CFG.wallHalf + 4.5, CFG.walkY); }
 
   updateCarriers(dt) {
     const L = CFG.rockLogi;
@@ -297,6 +311,8 @@ export class DefenseSide {
     if (this.brainT > 0) return;
     this.brainT = 0.5;
     const B = this.battle;
+    // สละกำแพงแล้ว — ห้ามสั่งกองที่ยกไปช่วยให้เดินกลับจุดเฝ้า (จะไปทับคำสั่งลงบันไดจนค้างบนกำแพง)
+    if (this.evacuated) return;
 
     if (this.detachedTo !== null) {
       const heat = B.feintHeat[this.detachedTo];
@@ -357,8 +373,17 @@ export class ReserveForce {
     this.battle = battle;
     this.squads = [];
     this.dispatchTimer = 3;
+    // ตั้งเป็นแถวรอบวงแหวนเมืองชั้นนอก ด้านละเท่า ๆ กัน (กลางเมืองคือเมืองชั้นในและวัง)
+    const ring1Face = CFG.rings[1].half + CFG.rings[1].thick;
+    const band = CFG.wallHalf - ring1Face;
     for (let i = 0; i < CFG.reserveSquads; i++) {
-      const px = -35 + (i % 20) * 3.5, pz = 5 + Math.floor(i / 20) * 3;
+      const side = i % 4;
+      const j = Math.floor(i / 4);
+      const col = j % 10, row = Math.floor(j / 10);
+      const tOff = (col - 4.5) * 5.4;
+      const dist = ring1Face + band * 0.55 - row * 3.2;
+      const origin = worldPoint(side, tOff, dist, 0);
+      const { n, t } = SIDE_VECS[side];
       const soldiers = [];
       for (let k = 0; k < CFG.squadSize; k++) {
         const s = new Soldier({
@@ -367,7 +392,10 @@ export class ReserveForce {
         });
         s.zone = 'city';
         s.state = 'idle';
-        s.pos.set(px + (k % 2) * 1.4 - 0.7, 0, pz + Math.floor(k / 2) * 1.4);
+        s.pos.copy(origin)
+          .addScaledVector(t, (k % 2) * 1.4 - 0.7)
+          .addScaledVector(n, Math.floor(k / 2) * 1.4 - 0.7);
+        s.yaw = Math.atan2(n.x, n.z);
         s.homePost = s.pos.clone();
         this.battle.group.add(s.mesh);
         s.syncMesh(0);
@@ -463,6 +491,8 @@ export class ReserveForce {
       if (sq.soldiers.every((s) => !s.alive || (s.zone === 'wall' && s.state === 'post'))) sq.state = 'done';
       return;
     }
+    // กำแพงด้านนั้นเสียไประหว่างเดินไปบันได — ยกเลิก ไม่ขึ้นไปยืนค้างบนกำแพงที่ถูกยึดแล้ว
+    if (sq.state === 'toStair' && B.captured[sq.side]) sq.state = 'idle';
     let target = null;
     if (sq.state === 'toStair') target = stairPoints(sq.side).base;
     else if (sq.state === 'guard') {
@@ -483,6 +513,132 @@ export class ReserveForce {
         sq.state = 'ascending';
         for (const s of ready) B.stairs[sq.side].requestUp(s);
       }
+    }
+  }
+}
+
+// ---------- ทหารรักษาเมืองชั้นในและวังต้องห้าม ----------
+// ยืนตั้งรับอยู่ในชั้นของตัวเอง (ออกไปไหนไม่ได้จนกว่าประตูชั้นนั้นจะเปิด) — แนวโล่ปิดปากประตูด้านใน,
+// ง้าวหนุนหลัง, ม้าองครักษ์พุ่งใส่ผู้บุกที่หลุดเข้ามา, และพลธนูบนสันกำแพงยิงลงใส่ผู้บุกทั้งสองฝั่งกำแพง
+const GUARD_TYPES = {
+  shield: { mesh: 'guardShield', utype: 'guardShield', stat: () => CFG.garrison.shield },
+  spear: { mesh: 'guardSpear', utype: 'guardSpear', stat: () => CFG.garrison.spear },
+  cav: { mesh: 'guardCav', utype: 'guardCav', kind: 'cav', stat: () => CFG.garrison.cav },
+};
+
+export class Garrison {
+  constructor(battle) {
+    this.battle = battle;
+    this.soldiers = [];
+    this.archers = [];
+    this.deploy(1, 'inner', CFG.garrison.inner);
+    this.deploy(2, 'palace', CFG.garrison.palace);
+  }
+
+  deploy(ring, zone, plan) {
+    const R = CFG.rings[ring];
+    const gateZ = R.half - 4.5;
+    const shieldRows = Math.ceil(plan.shields / 12);
+    for (let i = 0; i < plan.shields; i++) {
+      const col = i % 12, row = Math.floor(i / 12);
+      this.spawn('shield', zone, new THREE.Vector3((col - 5.5) * 1.5, 0, gateZ - row * 1.5));
+    }
+    const behind = Math.ceil(plan.spears / 2);
+    const ringDepth = ring < CFG.rings.length - 1 ? (R.half + CFG.rings[ring + 1].half + CFG.rings[ring + 1].thick) / 2 : R.half * 0.72;
+    for (let i = 0; i < plan.spears; i++) {
+      if (i < behind) {
+        const col = i % 12, row = Math.floor(i / 12);
+        this.spawn('spear', zone, new THREE.Vector3((col - 5.5) * 1.5, 0, gateZ - shieldRows * 1.5 - 1.2 - row * 1.5));
+      } else {
+        // เฝ้าลานด้านอื่นของชั้น (เมืองชั้นใน: เหนือ/ตะวันออก/ตะวันตก · วัง: ตะวันออก/ตะวันตก ข้างตำหนัก)
+        const j = i - behind;
+        const sides = ring === CFG.rings.length - 1 ? [1, 3] : [0, 1, 3];
+        const side = sides[j % sides.length];
+        const k = Math.floor(j / sides.length);
+        this.spawn('spear', zone, worldPoint(side, (k - 2) * 2.4, ringDepth, 0));
+      }
+    }
+    for (let i = 0; i < plan.cav; i++) {
+      const perRow = Math.min(12, plan.cav);
+      const col = i % perRow, row = Math.floor(i / perRow);
+      const pos = ring === CFG.rings.length - 1
+        ? new THREE.Vector3((col - (perRow - 1) / 2) * 2.4, 0, 3 - row * 2.6)
+        : worldPoint(0, (col - (perRow - 1) / 2) * 2.6, ringDepth - row * 2.6, 0);
+      this.spawn('cav', zone, pos);
+    }
+    // พลธนูบนสันกำแพง (ด้านใต้เว้นซุ้มประตู)
+    const wallZone = `wall${ring + 1}`;
+    const mid = R.half + R.thick / 2;
+    for (let side = 0; side < 4; side++) {
+      const ts = spreadAlong(plan.archersPerSide, mid - 3, side === 2 ? CFG.innerGates.halfWidth + 5 : 0);
+      for (const t of ts) {
+        const s = new Soldier({
+          type: 'guardArcher', faction: 'def', side: -1, utype: 'guardArcher',
+          hp: CFG.garrison.archer.hp, speed: CFG.defender.speed, atkCd: CFG.garrison.archer.cd, dmg: CFG.garrison.archer.dmg, rng: this.battle.rng,
+        });
+        s.pos.copy(worldPoint(side, t, mid, R.h + 0.45));
+        s.homePost = s.pos.clone();
+        s.zone = wallZone;
+        s.state = 'post';
+        s.ring = ring;
+        s.yaw = Math.atan2(SIDE_VECS[side].n.x, SIDE_VECS[side].n.z);
+        s.cd = CFG.garrison.archer.cd * (0.3 + this.battle.rng());
+        this.battle.group.add(s.mesh);
+        s.syncMesh(0);
+        this.archers.push(s);
+      }
+    }
+  }
+
+  spawn(type, zone, pos) {
+    const def = GUARD_TYPES[type];
+    const stat = def.stat();
+    const s = new Soldier({
+      type: def.mesh, faction: 'def', side: -1, kind: def.kind || 'inf', utype: def.utype,
+      hp: stat.hp, speed: stat.speed, atkCd: stat.atkCd, dmg: stat.dmg, rng: this.battle.rng,
+    });
+    s.zone = zone;
+    s.state = 'post';
+    s.pos.copy(pos).setY(0);
+    s.homePost = s.pos.clone();
+    s.yaw = 0; // หันหน้าลงใต้ เข้าหาประตู
+    if (stat.detectRange) s.detectRange = stat.detectRange;
+    if (s.kind === 'cav') s.chargeReady = true;
+    this.battle.group.add(s.mesh);
+    s.syncMesh(0);
+    this.soldiers.push(s);
+    return s;
+  }
+
+  allSoldiers() { return [...this.soldiers, ...this.archers]; }
+  aliveCount() {
+    let n = 0;
+    for (const s of this.soldiers) if (s.alive) n++;
+    for (const s of this.archers) if (s.alive) n++;
+    return n;
+  }
+  shields() { return this.soldiers.filter((s) => s.alive && s.utype === 'guardShield'); }
+
+  update(dt, targets) {
+    const range = CFG.garrison.archer.range;
+    for (const a of this.archers) {
+      if (!a.alive) continue;
+      a.cd -= dt;
+      if (a.cd > 0) continue;
+      let best = null, bestD = range;
+      for (const t of targets) {
+        const d = a.pos.distanceTo(t.pos);
+        if (d < bestD) { bestD = d; best = t; }
+      }
+      if (!best) { a.cd = 0.4; continue; }
+      a.cd = CFG.garrison.archer.cd * (0.8 + this.battle.rng() * 0.4);
+      a.facePoint(best.pos, dt);
+      this.battle.fireArrow(a, best, 'def');
+      sfx.whoosh();
+    }
+    // ม้าองครักษ์ที่กลับถึงจุดตั้งหลักแล้วพร้อมพุ่งชาร์จอีกครั้ง
+    for (const s of this.soldiers) {
+      if (s.alive && s.kind === 'cav' && !s.inCombat && s.homePost && s.pos.distanceTo(s.homePost) < 3) s.chargeReady = true;
     }
   }
 }

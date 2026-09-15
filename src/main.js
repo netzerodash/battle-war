@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { initScene, updateCameraTween } from './scene.js';
 import { buildCity, animateCityFlags, openGateDoors } from './city.js';
-import { CFG, SIDE_NAMES, genMission } from './config.js';
+import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, genMission } from './config.js';
 import { Battle } from './battle.js';
 import { SIDE_VECS, classifyOrderPoint, sectionOf } from './world.js';
 import * as UI from './ui.js';
@@ -68,10 +68,15 @@ function setFocus(pos, target) {
 }
 function focusSide(side) {
   const n = SIDE_VECS[side].n;
-  setFocus(new THREE.Vector3(n.x * 128, 62, n.z * 128), new THREE.Vector3(n.x * 40, 10, n.z * 40));
+  const far = CFG.wallHalf + 88;
+  setFocus(new THREE.Vector3(n.x * far, 92, n.z * far), new THREE.Vector3(n.x * CFG.wallHalf, 10, n.z * CFG.wallHalf));
 }
 function focusWide() {
-  setFocus(new THREE.Vector3(0, 82, 165), new THREE.Vector3(0, 8, 0));
+  setFocus(new THREE.Vector3(0, 130, 250), new THREE.Vector3(0, 8, 0));
+}
+// มุมลานวังต้องห้าม (เป้าหมายสุดท้าย)
+function focusPalace() {
+  setFocus(new THREE.Vector3(0, 58, 78), new THREE.Vector3(0, 4, 6));
 }
 
 // ---------- แปลงเมาส์/นิ้ว <-> โลก ----------
@@ -98,32 +103,45 @@ function zoomCam(f) {
   controls.update();
 }
 
-// ตรวจว่านิ้ว/เมาส์แตะ "ทับตัวกำแพง" บนจอหรือไม่ (ray วิ่งชนวงแหวนกำแพง)
-// ถ้าใช่ คืนด้านที่โดน — ใช้แปลงแตะที่กำแพงให้เป็นคำสั่งโจมตีด้านนั้น
-function wallTapSide(clientX, clientY) {
+// ตรวจว่านิ้ว/เมาส์แตะ "ทับตัวกำแพง" ชั้นไหนบนจอ (ray วิ่งชนเนื้อกำแพงทุกชั้น)
+// คืน { ring, side, point } — กำแพงนอก = สั่งตีด้านนั้น, กำแพงชั้นใน = พาดบันไดข้าม
+// ช่องประตูไม่นับเป็นกำแพง (แตะที่ประตูชั้นในจึงกลายเป็นคำสั่งเดินไปฟันประตู)
+function wallTapAt(clientX, clientY) {
   mouseNdc.set((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(mouseNdc, camera);
   const ro = raycaster.ray.origin, rd = raycaster.ray.direction;
-  for (let t = 2; t < 520; t += 1.2) {
+  for (let t = 2; t < 700; t += 0.8) {
     const x = ro.x + rd.x * t, y = ro.y + rd.y * t, z = ro.z + rd.z * t;
+    if (y < -0.5) return null; // ถึงพื้นแล้วโดยไม่ชนกำแพง
     const m = Math.max(Math.abs(x), Math.abs(z));
-    if (m > CFG.wallHalf + CFG.wallThick + 0.5) continue; // ยังอยู่นอกเมือง
-    if (m < CFG.wallHalf - 1.5) return null;               // ลอดผ่านเหนือกำแพงเข้าไปในเมืองแล้ว
-    if (y >= -0.5 && y <= CFG.wallH + 1.5) return sectionOf(new THREE.Vector3(x, 0, z));
+    for (let ring = 0; ring < CFG.rings.length; ring++) {
+      const R = CFG.rings[ring];
+      if (m < R.half - 0.5 || m > R.half + R.thick + 0.5 || y > R.h + 1.5) continue;
+      if (ring > 0 && z > 0 && Math.abs(x) <= CFG.innerGates.halfWidth + 0.6) continue;
+      const point = new THREE.Vector3(x, 0, z);
+      return { ring, side: sectionOf(point), point };
+    }
   }
   return null;
 }
 
-// คำสั่งที่จุดแตะ/คลิก — พร้อมแปลง "แตะที่กำแพง" เป็นโจมตีด้านนั้น
+function wallOrder(hit) {
+  return hit.ring === 0
+    ? { type: 'assault', side: hit.side }
+    : { type: 'escalade', ring: hit.ring, side: hit.side };
+}
+
+// คำสั่งที่จุดแตะ/คลิก — แตะกำแพงนอก = โจมตีด้านนั้น · แตะกำแพงชั้นใน = พาดบันไดข้าม
 function issueOrderAt(clientX, clientY) {
   const p = groundPoint(clientX, clientY);
   if (!p) return;
   let cls = classifyOrderPoint(p);
+  let point = p;
   if (cls.type !== 'assault') {
-    const side = wallTapSide(clientX, clientY);
-    if (side !== null) cls = { type: 'assault', side };
+    const hit = wallTapAt(clientX, clientY);
+    if (hit) { cls = wallOrder(hit); point = hit.point; }
   }
-  battle.orderSelected(p, cls);
+  battle.orderSelected(point, cls);
 }
 
 function companyScreenPos(comp) {
@@ -199,7 +217,8 @@ function startBattle(rerollMission) {
   if (battle) { scene.remove(battle.group); battle = null; }
   if (rerollMission) mission = genMission();
   city.sides.forEach((s) => s.flagMat.color.set(0xb03030));
-  openGateDoors(city.doorL, city.doorR, 0);
+  city.palaceFlag.flagMat.color.set(0xb03030);
+  for (const g of city.gates) openGateDoors(g.doorL, g.doorR, 0);
   battle = new Battle(mission, scene, city, onBattleEvent);
   // Keep a new battle in sync with the tactical controls the player can already see.
   battle.commandFormation = formationSelect.value;
@@ -217,7 +236,7 @@ function startBattle(rerollMission) {
   captureChoice.classList.add('hidden');
   pendingCaptureSide = null;
   focusWide();
-  UI.toast('🎺 กองทัพตั้งรับคำสั่ง — ลากเมาส์ซ้ายเลือกกอง แล้วคลิกขวาสั่งโจมตี');
+  UI.toast('🎺 เป้าหมาย: ฝ่ากำแพงสามชั้นเข้าไปยึดลานวังต้องห้าม — ลากซ้ายเลือกกอง คลิกขวาสั่งทัพ');
 }
 
 function onBattleEvent(type, data) {
@@ -228,7 +247,13 @@ function onBattleEvent(type, data) {
     case 'retreat_order': UI.toast(data.n ? `↩ ถอนกำลัง ${data.n} กองกลับแนวตั้งต้น` : 'กองที่กำลังปีน/อยู่บนกำแพงถอยทางนี้ไม่ได้', data.n ? '' : 'bad'); break;
     case 'hold_fire': UI.toast(data.enabled ? `🏹 นักธนู ${data.n} กองพักยิง` : `🏹 นักธนู ${data.n} กองกลับมายิง`, 'blue'); break;
     case 'inf_city_hint': UI.toast('🪜 ทหารราบเข้าเมืองทางบันไดใน — ตีกำแพงให้แตก แล้วพวกเขาจะลงไปเปิดประตูเอง'); break;
-    case 'cav_wait_gate': UI.toast('🐴 กองม้ารอหน้าประตู — ต้องเปิดประตูก่อนจึงจะพุ่งเข้าเมืองได้'); break;
+    case 'cav_wait_gate': UI.toast(`🐴 กองม้ารอหน้า${GATE_NAMES[data.ring ?? 0]} — พุ่งต่อเองเมื่อประตูเปิด`); break;
+    case 'order_escalade': UI.toast(`🪜 ${data.n} กองแบกบันไดไปพาดข้าม${WALL_NAMES[data.ring]}ด้าน${SIDE_NAMES[data.side]}!`); sfx.horn(); break;
+    case 'order_escalade_fail': UI.toast(`พาดบันไดข้าม${WALL_NAMES[data.ring]}ไม่ได้ — ต้องเป็นทหารราบที่เข้าถึงลานหน้ากำแพงนั้นแล้ว`, 'bad'); break;
+    case 'escalade_start': UI.toast(`🪜 ตั้งบันไดพาด${WALL_NAMES[data.ring]}ด้าน${SIDE_NAMES[data.side]} — ทหารเริ่มไต่ข้าม!`, 'blue'); break;
+    case 'inner_gate_attack': UI.toast(`🪓 ทหารเราเริ่มฟัน${GATE_NAMES[data.ring]}!`); break;
+    case 'inner_gate_open': UI.toast(`🚪 ${GATE_NAMES[data.ring]}${data.breached ? 'พังแล้ว' : 'ถูกแงะเปิดจากด้านใน'}! กองที่รอหน้าประตูบุกต่อทันที`, 'big blue'); sfx.cheer(); break;
+    case 'palace_contest': UI.toast('🏯 ทหารเราบุกถึงลานวังต้องห้าม! ยึดลานให้ครบเวลา — ต้องมีคนมากกว่าองครักษ์', 'big blue'); sfx.horn(); break;
     case 'cav_enter': UI.toast('🐴 กองม้าพุ่งเข้าเมือง — ไล่ล่าทหารที่เหลือ!', 'blue'); break;
     case 'captured':
       UI.toast(`🚩 ยึดกำแพงด้าน${SIDE_NAMES[data.side]}! เลือกภารกิจต่อไป`, 'big blue');
@@ -252,7 +277,7 @@ function onBattleEvent(type, data) {
     case 'ram_lost': UI.toast('⚫ รถทุบถูกหินจากหอประตูทำลาย!', 'bad'); sfx.thud(); break;
     case 'gate_breached': UI.toast('💥 รถทุบกระหน่ำประตูจนแตกกระจาย! กองม้าเข้าได้!', 'big blue'); sfx.cheer(); break;
     case 'gate_opening': UI.toast('🔧 ทหารเรากำลังแงะประตูเมือง...'); break;
-    case 'gate_open': UI.toast('🚪 ประตูเมืองเปิดแล้ว! สั่งกองม้าเข้าไล่ล่าได้', 'big blue'); sfx.cheer(); break;
+    case 'gate_open': UI.toast('🚪 ประตูเมืองชั้นนอกเปิดแล้ว! เทกองเข้าเมือง แล้วฝ่าประตูชั้นในต่อ', 'big blue'); sfx.cheer(); break;
     case 'evacuate': UI.toast(`🏰 ฝ่ายเมืองสละกำแพงด้าน${SIDE_NAMES[data.side]} ลงมารวมพลขั้นสุดท้าย!`); sfx.hornLow(); break;
     case 'end': UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
   }
@@ -315,10 +340,10 @@ window.addEventListener('pointerup', (e) => {
       for (const c of picked) battle.toggleSelect(c, true);
       if (picked.length) UI.toast(`เลือก ${battle.selection.size} กอง`);
     } else if (isTap && battle && !battle.ended) {
-      // แตะ: บนกำแพง (มีกองที่เลือก) = สั่งโจมตีด้านนั้นทันที
-      const wallSide = battle.selection.size > 0 ? wallTapSide(e.clientX, e.clientY) : null;
-      if (wallSide !== null) {
-        battle.orderSelected(new THREE.Vector3(), { type: 'assault', side: wallSide });
+      // แตะ: บนกำแพง (มีกองที่เลือก) = สั่งตีกำแพงนอก / พาดบันไดข้ามกำแพงชั้นในทันที
+      const wallHit = battle.selection.size > 0 ? wallTapAt(e.clientX, e.clientY) : null;
+      if (wallHit) {
+        battle.orderSelected(wallHit.point, wallOrder(wallHit));
       } else {
         // แตะบนกอง = เลือกเพิ่ม/ถอน · บนพื้น (มีกองที่เลือก) = สั่งทัพ
         const soldier = pickSoldier(e.clientX, e.clientY);
@@ -422,6 +447,7 @@ document.querySelectorAll('.hud-speed .spd[data-speed]').forEach((b) => {
 window.addEventListener('keydown', (e) => {
   if (!battle) return;
   if (e.key >= '1' && e.key <= '4') focusSide(+e.key - 1);
+  else if (e.key === '5') focusPalace();
   else if (e.key === '0') focusWide();
   else if (e.key === 'Escape') {
     if (unitViewSoldier) leaveUnitView();

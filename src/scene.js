@@ -1,15 +1,16 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-export const BATTLEFIELD_CLEAR_RADIUS = 220;
+// เมืองสามชั้นใหญ่ขึ้น — ทัพตั้งไกลขึ้น ภูเขาฉากหลังต้องถอยตาม
+export const BATTLEFIELD_CLEAR_RADIUS = 300;
 
 export function mountainSpec(i) {
   const angle = (i / 10) * Math.PI * 2 + 0.35;
-  const height = 55 + ((i * 97) % 70);
+  const height = 70 + ((i * 97) % 80);
   // Tall background peaks used to have very wide cone bases. After the army
   // doubled, those bases reached into the south deployment and hid units.
   const baseRadius = height * (0.58 + (i % 3) * 0.1);
-  const naturalRadius = 260 + ((i * 53) % 90);
+  const naturalRadius = 380 + ((i * 53) % 110);
   const centerRadius = Math.max(naturalRadius, BATTLEFIELD_CLEAR_RADIUS + baseRadius);
   return {
     angle, centerRadius, height, baseRadius,
@@ -29,10 +30,10 @@ export function initScene(container) {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xd8e2df);
-  scene.fog = new THREE.Fog(0xd8e2df, 160, 420);
+  scene.fog = new THREE.Fog(0xd8e2df, 260, 700);
 
-  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 800);
-  camera.position.set(0, 72, 138);
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 1400);
+  camera.position.set(0, 118, 225);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 7, 0);
@@ -40,7 +41,7 @@ export function initScene(container) {
   controls.dampingFactor = 0.08;
   controls.maxPolarAngle = 1.42;
   controls.minDistance = 14;
-  controls.maxDistance = 300;
+  controls.maxDistance = 480;
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.5;
 
@@ -51,18 +52,19 @@ export function initScene(container) {
   const sun = new THREE.DirectionalLight(0xfff2dc, 1.5);
   sun.position.set(70, 110, 45);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -130;
-  sun.shadow.camera.right = 130;
-  sun.shadow.camera.top = 130;
-  sun.shadow.camera.bottom = -130;
-  sun.shadow.camera.far = 400;
+  sun.position.set(110, 170, 70);
+  sun.shadow.mapSize.set(coarse ? 2048 : 4096, coarse ? 2048 : 4096);
+  sun.shadow.camera.left = -200;
+  sun.shadow.camera.right = 200;
+  sun.shadow.camera.top = 200;
+  sun.shadow.camera.bottom = -200;
+  sun.shadow.camera.far = 600;
   sun.shadow.bias = -0.0006;
   scene.add(sun);
 
   // พื้น
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(900, 900),
+    new THREE.PlaneGeometry(1600, 1600),
     new THREE.MeshLambertMaterial({ color: 0x8ea065, flatShading: true })
   );
   ground.rotation.x = -Math.PI / 2;
