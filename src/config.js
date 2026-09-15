@@ -87,6 +87,9 @@ export const CFG = {
     archer: { hp: 4, dmg: 1, cd: 2.3, range: 40 },
     inner: { shields: 36, spears: 36, cav: 24, archersPerSide: 12 },
     palace: { shields: 24, spears: 30, cav: 16, archersPerSide: 8 },
+    // สมององครักษ์: คิดทุก thinkInterval วิ · ตีสวนเมื่อผู้บุกที่หลุดเข้ามา ≤ counterRatio × องครักษ์ในชั้น
+    // · ส่งคนไปดักจุดลงบันไดพาดบันไดละ interceptors นาย
+    ai: { thinkInterval: 0.5, counterRatio: 0.5, interceptors: 6 },
   },
 
   // ประตูชั้นใน: ทหารราบฟันประตูจากด้านนอกได้ (ไม่ต้องใช้รถทุบ) หรือคนที่ข้ามไปแล้วแงะเปิดจากด้านใน
@@ -98,6 +101,8 @@ export const CFG = {
     hackCap: 14,         // ฟันพร้อมกันได้ไม่เกินนี้ (หน้าประตูแคบ)
     openRadius: 4,
     insideBase: 0.1, insidePer: 0.06,
+    // น้ำมันเดือดจากซุ้มประตู: ทุก interval วิขณะถูกฟัน เตือน telegraph วิ แล้วราดรัศมี radius ม. (มีจำกัด pots หม้อ)
+    oil: { interval: 6, telegraph: 1.0, radius: 3.5, dmg: 3, pots: 8 },
   },
 
   // ชัยชนะ: ยึดลานวังชั้นในสุด — ทหารเรามากกว่าทหารเมืองในลานวังต่อเนื่องจนแถบเต็ม

@@ -241,7 +241,10 @@ export class Battle {
     this.innerGates = RINGS.slice(1).map((_, i) => {
       const ring = i + 1;
       const hp = CFG.innerGates.hp[ring];
-      return { ring, open: false, hp, hpMax: hp, progress: 0, anim: 0, started: false, hackT: 0 };
+      return {
+        ring, open: false, hp, hpMax: hp, progress: 0, anim: 0, started: false, hackT: 0,
+        hackers: [], sealed: false, oilT: CFG.innerGates.oil.interval, oilWarn: 0, oilPots: CFG.innerGates.oil.pots, oilRing: null,
+      };
     });
     this.palace = { progress: 0, atk: 0, def: 0 };
     this.rocks = [];
@@ -748,6 +751,7 @@ export class Battle {
     const G = CFG.innerGates;
     for (const g of this.innerGates) {
       const doors = this.gateDoors[g.ring];
+      g.hackers = [];
       if (g.open) {
         if (g.anim < 1) {
           g.anim = Math.min(1, g.anim + dt / 2.0);
@@ -762,6 +766,7 @@ export class Battle {
         if (!s.alive || s.kind !== 'inf') continue;
         if (s.zone === outsideZone && !s.inCombat && s.pos.distanceTo(front) < G.hackRadius) {
           hackers++;
+          g.hackers.push(s);
           if (!s.attackTarget) { s.facePoint(front, dt); s.intent = 'hack-inner-gate'; }
         } else if (s.zone === insideZone && s.pos.distanceTo(inside) < G.openRadius) {
           openers++;
@@ -777,6 +782,7 @@ export class Battle {
         }
         if (!g.started) { g.started = true; this.onEvent('inner_gate_attack', { ring: g.ring }); }
       }
+      this.updateOil(g, front.clone().addScaledVector(SIDE_VECS[2].n, -1.5), outsideZone, dt, hackers > 0);
       if (openers > 0) g.progress = Math.min(1, g.progress + dt * (G.insideBase + G.insidePer * Math.min(8, openers)));
       if (g.hp <= 0 || g.progress >= 1) {
         g.open = true;
@@ -785,6 +791,50 @@ export class Battle {
         this.rerouteBlockedCompanies(g.ring);
       }
     }
+  }
+
+  // น้ำมันเดือดจากซุ้มประตูชั้นใน: ขณะถูกฟัน ทุก interval วิ เตือนด้วยวงแดงหน้าประตู แล้วราดใส่ทุกคนในรัศมี
+  updateOil(g, spot, outsideZone, dt, underAttack) {
+    const O = CFG.innerGates.oil;
+    g.oilPots ??= O.pots;
+    g.oilT ??= O.interval;
+    g.oilWarn ??= 0;
+    if (g.oilWarn > 0) {
+      g.oilWarn -= dt;
+      if (g.oilWarn <= 0) this.pourOil(g, spot, outsideZone);
+      return;
+    }
+    if (!underAttack || g.oilPots <= 0) return;
+    g.oilT -= dt;
+    if (g.oilT > 0) return;
+    g.oilT = O.interval;
+    g.oilWarn = O.telegraph;
+    if (this.group) {
+      if (!g.oilRing) {
+        g.oilRing = new THREE.Mesh(ringGeoBig, new THREE.MeshBasicMaterial({ color: 0xff5a2a, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+        g.oilRing.rotation.x = -Math.PI / 2;
+        this.group.add(g.oilRing);
+      }
+      g.oilRing.scale.setScalar(O.radius / 4.1);
+      g.oilRing.position.set(spot.x, 0.2, spot.z);
+      g.oilRing.visible = true;
+    }
+  }
+
+  pourOil(g, spot, outsideZone) {
+    const O = CFG.innerGates.oil;
+    g.oilPots--;
+    if (g.oilRing) g.oilRing.visible = false;
+    let hit = 0;
+    for (const s of this.cityAttackers) {
+      if (!s.alive || s.zone !== outsideZone || s.pos.distanceTo(spot) > O.radius) continue;
+      s.damage(O.dmg);
+      hit++;
+    }
+    this.spawnSpark(spot.clone().setY(1.6), 'gold', 10, 3.2);
+    this.spawnSpark(spot.clone().setY(0.8), 'dust', 6, 2.4);
+    this.shake = Math.max(this.shake, 0.3);
+    this.onEvent('oil_poured', { ring: g.ring, hit, potsLeft: g.oilPots });
   }
 
   // ยึดลานวัง: ผู้บุกในลานวังต้องมากกว่าองครักษ์ในลาน แถบจึงเดิน

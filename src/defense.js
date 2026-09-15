@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { worldPoint, sectionCenter, stairPoints, SIDE_VECS } from './world.js';
+import { worldPoint, sectionCenter, stairPoints, SIDE_VECS, gateFrontPoint, gateInsidePoint, regionOf, GROUND_ZONES } from './world.js';
 import { Soldier } from './soldier.js';
 import { rockGeo, rockMat } from './models.js';
 import { sfx } from './audio.js';
@@ -527,11 +527,29 @@ const GUARD_TYPES = {
   cav: { mesh: 'guardCav', utype: 'guardCav', kind: 'cav', stat: () => CFG.garrison.cav },
 };
 
+function nearestWithin(from, list, range) {
+  let best = null, bestD = range;
+  for (const t of list || []) {
+    if (!t.alive) continue;
+    const d = from.pos.distanceTo(t.pos);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return best;
+}
+
+function centroidOf(list) {
+  const c = new THREE.Vector3();
+  for (const s of list) c.add(s.pos);
+  return c.multiplyScalar(1 / list.length).setY(0);
+}
+
 export class Garrison {
   constructor(battle) {
     this.battle = battle;
     this.soldiers = [];
     this.archers = [];
+    this.thinkT = 0;
+    this.palacePostIndex = 0;
     this.deploy(1, 'inner', CFG.garrison.inner);
     this.deploy(2, 'palace', CFG.garrison.palace);
   }
@@ -602,6 +620,8 @@ export class Garrison {
     s.state = 'post';
     s.pos.copy(pos).setY(0);
     s.homePost = s.pos.clone();
+    // แนวโล่ขยับชิดประตูเมื่อประตูถูกฟัน (ประตูทุกชั้นอยู่ทางใต้ = +z)
+    if (type === 'shield') s.gatePost = s.pos.clone().setZ(s.pos.z + 2);
     s.yaw = 0; // หันหน้าลงใต้ เข้าหาประตู
     if (stat.detectRange) s.detectRange = stat.detectRange;
     if (s.kind === 'cav') s.chargeReady = true;
@@ -626,11 +646,9 @@ export class Garrison {
       if (!a.alive) continue;
       a.cd -= dt;
       if (a.cd > 0) continue;
-      let best = null, bestD = range;
-      for (const t of targets) {
-        const d = a.pos.distanceTo(t.pos);
-        if (d < bestD) { bestD = d; best = t; }
-      }
+      // เล็งกลุ่มที่กำลังฟันประตูชั้นนี้ก่อน แล้วค่อยยิงผู้บุกคนอื่นที่อยู่ในระยะ
+      const hackers = this.battle.innerGates?.[a.ring - 1]?.hackers;
+      const best = nearestWithin(a, hackers, range) || nearestWithin(a, targets, range);
       if (!best) { a.cd = 0.4; continue; }
       a.cd = CFG.garrison.archer.cd * (0.8 + this.battle.rng() * 0.4);
       a.facePoint(best.pos, dt);
@@ -640,6 +658,78 @@ export class Garrison {
     // ม้าองครักษ์ที่กลับถึงจุดตั้งหลักแล้วพร้อมพุ่งชาร์จอีกครั้ง
     for (const s of this.soldiers) {
       if (s.alive && s.kind === 'cav' && !s.inCombat && s.homePost && s.pos.distanceTo(s.homePost) < 3) s.chargeReady = true;
+      // องครักษ์ที่ถอยเข้าวัง: ลอดประตูวังพ้นแนวกลางกำแพงแล้วนับเป็นทหารในลานวัง
+      if (s.alive && s.relocating) {
+        if (s.zone === 'inner' && regionOf(s.pos) === 3) s.zone = 'palace';
+        if (s.zone === 'palace' && !(s.waypoints && s.waypoints.length)) s.relocating = false;
+      }
     }
+    this.thinkT -= dt;
+    if (this.thinkT <= 0) {
+      this.thinkT = CFG.garrison.ai.thinkInterval;
+      this.think();
+    }
+  }
+
+  // ---------- สมององครักษ์ (เรียงตามความสำคัญ): ถอยช่วยวัง · ดักบันไดพาด · ตีสวน · ยันประตู · ประจำจุด ----------
+  think() {
+    const B = this.battle;
+    const AI = CFG.garrison.ai;
+    const intruders = { inner: [], palace: [] };
+    for (const s of B.cityAttackers || []) if (s.alive && intruders[s.zone]) intruders[s.zone].push(s);
+    const ladders = (B.companies || []).filter((c) => c.escalade?.planted && c.aliveSoldiers.length > 0).map((c) => c.escalade);
+    const palaceThreat = (B.palace?.progress || 0) > 0 || intruders.palace.length > 0;
+    const palaceGateOpen = !!B.innerGates?.[1]?.open;
+    for (const [zone, ring] of [['inner', 1], ['palace', 2]]) {
+      const gate = B.innerGates?.[ring - 1];
+      const guards = this.soldiers.filter((s) => s.alive && s.zone === zone && !s.relocating);
+      if (gate?.open && !gate.sealed) { gate.sealed = true; this.sealBreach(ring, guards); }
+      const foes = intruders[zone];
+      const counter = foes.length > 0 && foes.length <= guards.length * AI.counterRatio;
+      const foeCenter = foes.length ? centroidOf(foes) : null;
+      const intercept = new Map();
+      for (const e of ladders) {
+        if (GROUND_ZONES[e.ring + 1] !== zone) continue;
+        guards.filter((s) => !intercept.has(s) && s.kind !== 'cav')
+          .sort((a, b) => a.pos.distanceToSquared(e.landing) - b.pos.distanceToSquared(e.landing))
+          .slice(0, AI.interceptors)
+          .forEach((s) => intercept.set(s, e.landing));
+      }
+      for (const s of guards) {
+        if (zone === 'inner' && palaceThreat && palaceGateOpen) { this.relocateToPalace(s); continue; }
+        if (intercept.has(s)) { s.orderTarget = intercept.get(s); s.intent = 'intercept-ladder'; continue; }
+        if (counter) { s.orderTarget = foeCenter; s.intent = 'counter-attack'; continue; }
+        if (gate && !gate.open && gate.started && s.gatePost) { s.orderTarget = s.gatePost; s.intent = 'brace-gate'; continue; }
+        s.orderTarget = null;
+        s.intent = 'guard-post';
+      }
+    }
+  }
+
+  // ประตูแตก: โล่ตั้งแนวใหม่ขวางปากประตูด้านใน · ม้าไปตั้งหลักสองปีกพร้อมพุ่งตีขนาบ
+  sealBreach(ring, guards) {
+    const R = CFG.rings[ring];
+    guards.filter((s) => s.utype === 'guardShield').forEach((s, i) => {
+      const col = i % 12, row = Math.floor(i / 12);
+      s.homePost = new THREE.Vector3((col - 5.5) * 1.15, 0, R.half - 1.6 - row * 1.4);
+      s.gatePost = null;
+    });
+    const flankX = ring === 1 ? 14 : 9;
+    guards.filter((s) => s.kind === 'cav').forEach((s, i) => {
+      const sign = i % 2 ? 1 : -1;
+      const k = Math.floor(i / 2);
+      s.homePost = new THREE.Vector3(sign * (flankX + (k % 3) * 1.4), 0, R.half - 6 - Math.floor(k / 3) * 2.4);
+    });
+  }
+
+  relocateToPalace(s) {
+    if (s.relocating) return;
+    const i = this.palacePostIndex++;
+    const post = new THREE.Vector3(-7.7 + (i % 8) * 2.2, 0, 7 - (Math.floor(i / 8) % 5) * 2.2);
+    s.relocating = true;
+    s.orderTarget = null;
+    s.waypoints = [gateFrontPoint(2), gateInsidePoint(2), post];
+    s.homePost = post;
+    s.intent = 'fall-back-to-palace';
   }
 }

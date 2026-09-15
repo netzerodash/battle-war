@@ -289,6 +289,7 @@ function onBattleEvent(type, data) {
     case 'gate_opening': UI.toast('🔧 ทหารเรากำลังแงะประตูเมือง...'); break;
     case 'gate_open': UI.toast('🚪 ประตูเมืองชั้นนอกเปิดแล้ว! เทกองเข้าเมือง แล้วฝ่าประตูชั้นในต่อ', 'big blue'); sfx.cheer(); break;
     case 'evacuate': UI.toast(`🏰 ฝ่ายเมืองสละกำแพงด้าน${SIDE_NAMES[data.side]} ลงมารวมพลขั้นสุดท้าย!`); sfx.hornLow(); break;
+    case 'oil_poured': if (data.hit > 0) UI.toast(`🔥 น้ำมันเดือดราดหน้า${GATE_NAMES[data.ring]} — โดน ${data.hit} นาย (เหลือ ${data.potsLeft} หม้อ)`, 'bad'); break;
     case 'group_saved': UI.toast(`บันทึกกลุ่ม ${data.n}: ${data.count} กอง — กด ${data.n} เพื่อเรียก`, 'good'); break;
     case 'end': UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
   }

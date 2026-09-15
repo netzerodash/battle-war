@@ -807,6 +807,7 @@ test('infantry hacking a closed inner gate break it open and release waiting com
     gateDoors: [], cityAttackers: new Set(hackers), rng: () => 0.5, shake: 0,
     spawnSpark() {}, onEvent: (t, d) => events.push([t, d]),
     rerouteBlockedCompanies(ring) { rerouted = ring; return 0; },
+    updateOil: Battle.prototype.updateOil, pourOil: Battle.prototype.pourOil,
   };
   for (let i = 0; i < 20 && !battle.innerGates[0].open; i++) Battle.prototype.updateInnerGates.call(battle, 0.5);
   assert.equal(battle.innerGates[0].open, true);
@@ -925,4 +926,70 @@ test('quick-select keys pick infantry inside the walls and idle companies', () =
   assert.ok(battle.selection.has(inside) && battle.selection.has(fighting));
   assert.equal(Battle.prototype.selectIdleCompanies.call(battle), 2);
   assert.ok(battle.selection.has(outside) && battle.selection.has(archer), 'moving or fighting companies are not idle');
+});
+
+test('boiling oil warns first, then scalds only the soldiers hacking an inner gate', () => {
+  const front = gateFrontPoint(1);
+  const spot = front.clone().add(new THREE.Vector3(0, 0, -1.5));
+  const soldier = (dz) => ({
+    alive: true, kind: 'inf', zone: 'city', inCombat: false, hp: 6,
+    pos: spot.clone().add(new THREE.Vector3(0.5, 0, dz)), facePoint() {}, damage(n) { this.hp -= n; },
+  });
+  const hackers = [soldier(0), soldier(1)];
+  const bystander = soldier(20);
+  const events = [];
+  const battle = {
+    innerGates: [{ ring: 1, open: false, hp: 1e6, hpMax: 1e6, progress: 0, anim: 0, started: false, hackT: 0 }],
+    gateDoors: [], cityAttackers: new Set([...hackers, bystander]), rng: () => 0.5, shake: 0,
+    spawnSpark() {}, onEvent: (t, d) => events.push([t, d]), rerouteBlockedCompanies() {},
+    updateOil: Battle.prototype.updateOil, pourOil: Battle.prototype.pourOil,
+  };
+  const O = CFG.innerGates.oil;
+  let warnedBeforePour = false;
+  for (let t = 0; t < O.interval + O.telegraph + 0.5; t += 0.25) {
+    Battle.prototype.updateInnerGates.call(battle, 0.25);
+    if (battle.innerGates[0].oilWarn > 0 && !events.some((e) => e[0] === 'oil_poured')) warnedBeforePour = true;
+  }
+  const oil = events.find((e) => e[0] === 'oil_poured');
+  assert.ok(warnedBeforePour, 'oil must be telegraphed before it lands');
+  assert.equal(oil[1].hit, 2);
+  assert.equal(oil[1].potsLeft, O.pots - 1);
+  assert.ok(hackers.every((h) => h.hp === 6 - O.dmg));
+  assert.equal(bystander.hp, 6);
+  assert.deepEqual(battle.innerGates[0].hackers, hackers, 'wall archers get the list of gate hackers');
+});
+
+test('inner guards counter-attack a small breakthrough and brace a gate under attack', () => {
+  const garrison = new Garrison({ rng: () => 0.5, group: new THREE.Group() });
+  const intruder = (x, z) => ({ alive: true, zone: 'inner', pos: new THREE.Vector3(x, 0, z) });
+  garrison.battle = {
+    ...garrison.battle, companies: [], palace: { progress: 0 },
+    cityAttackers: new Set([intruder(20, 30), intruder(22, 30)]),
+    innerGates: [{ ring: 1, open: false, started: false }, { ring: 2, open: false, started: true }],
+  };
+  garrison.think();
+  const inner = garrison.soldiers.filter((s) => s.zone === 'inner');
+  assert.ok(inner.every((s) => s.intent === 'counter-attack'));
+  assert.ok(Math.abs(inner[0].orderTarget.x - 21) < 1e-9);
+  const palaceShields = garrison.soldiers.filter((s) => s.zone === 'palace' && s.utype === 'guardShield');
+  assert.ok(palaceShields.every((s) => s.intent === 'brace-gate' && s.orderTarget.z > s.homePost.z));
+});
+
+test('guards seal an opened gate, intercept ladders, and fall back into a threatened palace', () => {
+  const garrison = new Garrison({ rng: () => 0.5, group: new THREE.Group() });
+  const ladder = { aliveSoldiers: [{}], escalade: { ring: 1, planted: true, landing: new THREE.Vector3(36.2, 0, 10) } };
+  garrison.battle = {
+    ...garrison.battle, cityAttackers: new Set(), companies: [ladder], palace: { progress: 0 },
+    innerGates: [{ ring: 1, open: true, started: true }, { ring: 2, open: false, started: false }],
+  };
+  garrison.think();
+  const inner = garrison.soldiers.filter((s) => s.zone === 'inner');
+  assert.equal(inner.filter((s) => s.intent === 'intercept-ladder').length, CFG.garrison.ai.interceptors);
+  const shields = inner.filter((s) => s.utype === 'guardShield');
+  assert.ok(shields.every((s) => s.homePost.z > CFG.rings[1].half - 5), 'shields re-form across the breach');
+  garrison.battle.palace.progress = 0.2;
+  garrison.battle.innerGates[1].open = true;
+  garrison.think();
+  assert.ok(inner.every((s) => s.relocating && s.intent === 'fall-back-to-palace'));
+  assert.ok(inner.every((s) => regionOf(s.homePost) === 3 && s.waypoints.at(-1) === s.homePost));
 });
