@@ -478,10 +478,20 @@ export class ReserveForce {
         }
       }
     }
-    if (B.invadersInCity() >= 3) {
-      for (const sq of this.squads) {
-        if (sq.state !== 'idle') continue;
-        if (B.nearestInvader(sq.soldiers[0].pos, 30)) sq.state = 'guard';
+    // ล่าผู้บุกที่หลงเหลือในเมืองชั้นนอก — จับคู่กองว่างงานให้คนใกล้ที่สุดก่อน (ตะกละแบบง่าย ไม่ต้อง optimal)
+    // ไม่รอให้ครบ 3 คนเหมือนเดิม เพราะผู้บุกกลุ่มเล็กที่รอดมาถึงตรงนี้ต้องมีคนไล่ล่าด้วย ไม่งั้นจะไม่มีใครจบเกม
+    const invaders = [...B.cityAttackers].filter((s) => s.alive && s.zone === 'city');
+    if (invaders.length) {
+      const idle = this.squads.filter((sq) => sq.state === 'idle' && sq.soldiers.some((s) => s.alive));
+      for (const inv of invaders) {
+        if (!idle.length) break;
+        let bestI = 0, bestD = Infinity;
+        for (let i = 0; i < idle.length; i++) {
+          const d = idle[i].soldiers.find((s) => s.alive).pos.distanceToSquared(inv.pos);
+          if (d < bestD) { bestD = d; bestI = i; }
+        }
+        idle[bestI].state = 'guard';
+        idle.splice(bestI, 1);
       }
     }
   }
@@ -497,8 +507,10 @@ export class ReserveForce {
     let target = null;
     if (sq.state === 'toStair') target = stairPoints(sq.side).base;
     else if (sq.state === 'guard') {
-      const post = sq.soldiers.find((s) => s.alive).homePost;
-      const inv = B.nearestInvader(post, 24);
+      // ไล่ต่อเนื่องจากตำแหน่งปัจจุบันของกอง ไม่ใช่จุดตั้งเดิม — เดิมยึดจาก homePost ที่อยู่กับที่
+      // ทำให้กองที่ไล่ออกมาไกลแล้วเลิกไล่เอง ทั้งที่ตัวกองยังอยู่ใกล้เป้าหมายอยู่เลย
+      const leader = sq.soldiers.find((s) => s.alive);
+      const inv = B.nearestInvader(leader.pos, 45);
       if (inv) target = inv.pos;
       else sq.state = 'idle';
     }
@@ -685,7 +697,8 @@ export class Garrison {
       const guards = this.soldiers.filter((s) => s.alive && s.zone === zone && !s.relocating);
       if (gate?.open && !gate.sealed) { gate.sealed = true; this.sealBreach(ring, guards); }
       const foes = intruders[zone];
-      const counter = foes.length > 0 && foes.length <= guards.length * AI.counterRatio;
+      // ล่าเสมอถ้าศัตรูเหลือน้อยพอ (smallGroupHunt) แม้กองรักษาเองจะบาดเจ็บจนสัดส่วนไม่ถึง counterRatio ก็ตาม
+      const counter = foes.length > 0 && (foes.length <= guards.length * AI.counterRatio || foes.length <= AI.smallGroupHunt);
       const foeCenter = foes.length ? centroidOf(foes) : null;
       const intercept = new Map();
       for (const e of ladders) {

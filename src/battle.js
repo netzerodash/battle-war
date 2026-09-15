@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CFG, mulberry32, TEAM_COLORS } from './config.js';
+import { CFG, mulberry32, TEAM_COLORS, applyDifficulty } from './config.js';
 import {
   SIDE_VECS, worldPoint, sectionOf, clampOnWall, sectionCenter, nearestSide, clamp,
   stairPoints, gateInsidePoint, clampFieldPoint, wallRoute, constrainFieldOutsideWall,
@@ -203,6 +203,8 @@ class StairChannel {
 export class Battle {
   constructor(mission, scene, cityRefs, onEvent) {
     this.mission = mission;
+    // ระดับความยากต้องมีผลก่อนสร้างทหารทุกนาย (จำนวน พลังชีวิต ประตู เวลาเกม)
+    this.difficulty = applyDifficulty(mission.difficulty);
     this.citySides = cityRefs.sides;
     this.doorL = cityRefs.doorL;
     this.doorR = cityRefs.doorR;
@@ -2138,6 +2140,7 @@ export class Battle {
     this.result = result;
     this.onEvent('end', {
       result, stats: { ...this.stats }, captured: [...this.captured], gateOpen: this.gate.open, time: this.time,
+      difficulty: this.difficulty,
       innerGatesOpen: this.innerGates.map((g) => g.open), palaceProgress: this.palace.progress,
     });
   }

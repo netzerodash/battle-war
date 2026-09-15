@@ -37,15 +37,15 @@ export const CFG = {
     shield: { hp: 7, dmg: 1, atkCd: 0.9, speed: 2.9, climb: 1.5, coverRadius: 4.2, coverChance: 0.65 },
     atkArch: { hp: 3, dmg: 1, atkCd: 5.0, range: 64, projSpeed: 30, gravity: 10, standDist: OUTER.half + OUTER.thick + 40, speed: 3.4 },
     cav: { hp: 7, dmg: 2, atkCd: 1.0, speed: 8.6 },
-    ram: { crew: 6, crewHp: 5, ramHp: 240, batterRate: 0.02, speed: 1.7, rockDmg: 20 },
+    ram: { crew: 6, crewHp: 5, ramHp: 240, batterRate: 0.016, speed: 1.7, rockDmg: 20 },
   },
 
   // ---------- ฝ่ายรับ ----------
-  wallMelee: 80,
+  wallMelee: 90,
   wallArchers: 28,
   archerCd: 2.4,
   archerRange: 45,          // ไม่ถึงแนวตั้งทัพเริ่มต้น แต่ยิงโต้ธนูที่เข้าประจำตำแหน่งได้
-  defender: { hp: 9, dmg: 1, atkCd: 1.3, speed: 2.4 },
+  defender: { hp: 11, dmg: 1, atkCd: 1.3, speed: 2.4 },
   archerStat: { hp: 3, dmg: 1, atkCd: 2.4, speed: 1.4 },
 
   // โลจิสติกส์หิน — กองหินบนกำแพงหมดต้องให้พลขนหินแบกขึ้นจากคลัง
@@ -76,25 +76,26 @@ export const CFG = {
   },
 
   // กองสำรองในเมืองชั้นนอก (ยืนเป็นแถวรอบวงแหวนระหว่างกำแพงนอกกับกำแพงชั้นใน)
-  reserveSquads: 120,
+  reserveSquads: 150,
   squadSize: 4,
 
   // ทหารรักษาเมืองชั้นในและวัง — เก่งกว่าทหารกำแพงนอก ตั้งรับอยู่ในชั้นของตัวเอง
   garrison: {
-    shield: { hp: 13, dmg: 1, atkCd: 1.1, speed: 2.2, coverRadius: 4, coverChance: 0.55 },
-    spear: { hp: 11, dmg: 2, atkCd: 1.3, speed: 2.5 },
-    cav: { hp: 11, dmg: 3, atkCd: 1.0, speed: 8.2, detectRange: 42 },
+    shield: { hp: 14, dmg: 1, atkCd: 1.1, speed: 2.2, coverRadius: 4, coverChance: 0.55 },
+    spear: { hp: 12, dmg: 2, atkCd: 1.3, speed: 2.5 },
+    cav: { hp: 12, dmg: 3, atkCd: 1.0, speed: 8.2, detectRange: 42 },
     archer: { hp: 4, dmg: 1, cd: 2.3, range: 40 },
-    inner: { shields: 36, spears: 36, cav: 24, archersPerSide: 12 },
-    palace: { shields: 24, spears: 30, cav: 16, archersPerSide: 8 },
+    inner: { shields: 42, spears: 42, cav: 26, archersPerSide: 14 },
+    palace: { shields: 28, spears: 34, cav: 18, archersPerSide: 9 },
     // สมององครักษ์: คิดทุก thinkInterval วิ · ตีสวนเมื่อผู้บุกที่หลุดเข้ามา ≤ counterRatio × องครักษ์ในชั้น
-    // · ส่งคนไปดักจุดลงบันไดพาดบันไดละ interceptors นาย
-    ai: { thinkInterval: 0.5, counterRatio: 0.5, interceptors: 6 },
+    // (หรือน้อยกว่า smallGroupHunt นาย ก็ล่าเสมอ ไม่ว่าองครักษ์จะเหลือเท่าไหร่ — กันไม่ให้กลุ่มเล็กที่รอดมา
+    // ถูกปล่อยผ่านเพราะกองรักษาเองก็บาดเจ็บจนสัดส่วนไม่ถึงเกณฑ์) · ส่งคนไปดักจุดลงบันไดพาดบันไดละ interceptors นาย
+    ai: { thinkInterval: 0.5, counterRatio: 0.5, smallGroupHunt: 6, interceptors: 6 },
   },
 
   // ประตูชั้นใน: ทหารราบฟันประตูจากด้านนอกได้ (ไม่ต้องใช้รถทุบ) หรือคนที่ข้ามไปแล้วแงะเปิดจากด้านใน
   innerGates: {
-    hp: [0, 110, 150],   // ตามลำดับชั้น (ชั้น 0 = ประตูเมืองนอก ใช้ระบบรถทุบเดิม)
+    hp: [0, 150, 200],   // ตามลำดับชั้น (ชั้น 0 = ประตูเมืองนอก ใช้ระบบรถทุบเดิม)
     halfWidth: 3.4,
     hackRadius: 6,
     hackRate: 0.3,       // ความเสียหายต่อวินาทีต่อทหาร 1 นาย
@@ -150,6 +151,48 @@ export const CFG = {
   },
 };
 
+// ---------- ระดับความยาก ----------
+// ค่าฐาน (ระดับปกติ) เก็บไว้ก่อน แล้วแต่ละระดับคูณจากค่าฐานเสมอ — เปลี่ยนระดับไปมาได้โดยค่าไม่เพี้ยนสะสม
+const BASE = JSON.parse(JSON.stringify({
+  defender: CFG.defender, wallMelee: CFG.wallMelee, reserveSquads: CFG.reserveSquads,
+  garrison: CFG.garrison, innerGates: CFG.innerGates, ram: CFG.unit.ram, palace: CFG.palace, timeLimit: CFG.timeLimit,
+}));
+
+export const DIFFICULTIES = Object.freeze({
+  easy: Object.freeze({
+    label: 'ง่าย', blurb: 'ทหารเมืองน้อยและเปราะกว่า ประตูพังง่าย ยืนยึดวัง 15 วิ มีเวลา 18 นาที',
+    defenderHp: 0.8, wallMelee: 0.8, reserves: 0.75, guards: 0.75, guardHp: 0.85, gateHp: 0.75, ramRate: 1.3, holdTime: 15, timeLimit: 1080, oilPots: 4,
+  }),
+  normal: Object.freeze({
+    label: 'ปกติ', blurb: 'รุมมั่วมีสิทธิ์แพ้ — วางแผนหลอกล่อ รวมพลบุก และเลือกทางฝ่าชั้นในถึงชนะ',
+    defenderHp: 1, wallMelee: 1, reserves: 1, guards: 1, guardHp: 1, gateHp: 1, ramRate: 1, holdTime: 20, timeLimit: 900, oilPots: 8,
+  }),
+  hard: Object.freeze({
+    label: 'ยาก', blurb: 'ทหารเมืองแน่นและทน องครักษ์มากขึ้น ประตูหนา ยืนยึดวัง 25 วิ มีเวลา 14 นาที',
+    defenderHp: 1.2, wallMelee: 1.2, reserves: 1.25, guards: 1.3, guardHp: 1.15, gateHp: 1.3, ramRate: 0.8, holdTime: 25, timeLimit: 840, oilPots: 12,
+  }),
+});
+
+export function applyDifficulty(name = 'normal') {
+  const key = DIFFICULTIES[name] ? name : 'normal';
+  const d = DIFFICULTIES[key];
+  CFG.difficulty = key;
+  CFG.defender.hp = Math.round(BASE.defender.hp * d.defenderHp);
+  CFG.wallMelee = Math.round(BASE.wallMelee * d.wallMelee);
+  CFG.reserveSquads = Math.round(BASE.reserveSquads * d.reserves);
+  for (const ring of ['inner', 'palace']) {
+    for (const f of ['shields', 'spears', 'cav', 'archersPerSide']) CFG.garrison[ring][f] = Math.max(1, Math.round(BASE.garrison[ring][f] * d.guards));
+  }
+  for (const u of ['shield', 'spear', 'cav', 'archer']) CFG.garrison[u].hp = Math.round(BASE.garrison[u].hp * d.guardHp);
+  CFG.innerGates.hp = BASE.innerGates.hp.map((h) => Math.round(h * d.gateHp));
+  CFG.innerGates.oil.pots = d.oilPots;
+  CFG.unit.ram.batterRate = BASE.ram.batterRate * d.ramRate;
+  CFG.palace.holdTime = d.holdTime;
+  CFG.timeLimit = d.timeLimit;
+  return key;
+}
+CFG.difficulty = 'normal';
+
 // สีประจำฝ่าย: ทัพเรา = แดง, ฝ่ายเมือง = น้ำเงิน (ธงเมืองเปลี่ยนเป็นแดงเมื่อเรายึดได้)
 export const TEAM_COLORS = Object.freeze({ attacker: 0xb03030, city: 0x2f5fa8 });
 
@@ -179,17 +222,18 @@ export function mulberry32(seed) {
   };
 }
 
-// สุ่มการวางกำลังฝ่ายเมืองของแต่ละภารกิจ (seed เดิม = ภารกิจเดิม)
-export function genMission(seed = Math.floor(Math.random() * 1e9)) {
+// สุ่มการวางกำลังฝ่ายเมืองของแต่ละภารกิจ (seed เดิม + ระดับเดิม = ภารกิจเดิม)
+export function genMission(seed = Math.floor(Math.random() * 1e9), difficulty = 'normal') {
+  const key = DIFFICULTIES[difficulty] ? difficulty : 'normal';
   const rng = mulberry32(seed);
   const sides = [];
   for (let i = 0; i < 4; i++) {
     sides.push({
-      melee: CFG.wallMelee,
+      melee: Math.round(BASE.wallMelee * DIFFICULTIES[key].wallMelee),
       archers: CFG.wallArchers,
       archerCd: CFG.archerCd * (0.85 + rng() * 0.3),
       pattern: ROCK_PATTERNS[Math.floor(rng() * ROCK_PATTERNS.length)],
     });
   }
-  return { seed, sides };
+  return { seed, sides, difficulty: key };
 }

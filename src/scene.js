@@ -40,8 +40,11 @@ export function initScene(container) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.maxPolarAngle = 1.42;
-  controls.minDistance = 14;
+  controls.minDistance = 5; // ซูมเข้าใกล้พอตรวจดูการวางกำลังเป็นรายตัวได้
   controls.maxDistance = 480;
+  controls.zoomSpeed = 1.15;
+  // pan ตามระนาบพื้น (ไม่ใช่ระนาบจอ) — กล้องเอียงมองลงแล้ว pan จะไม่ลอยขึ้นเหนือพื้น
+  controls.screenSpacePanning = false;
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.5;
 

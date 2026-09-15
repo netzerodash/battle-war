@@ -1,4 +1,4 @@
-import { CFG, SIDE_NAMES, GATE_NAMES } from './config.js';
+import { CFG, SIDE_NAMES, GATE_NAMES, DIFFICULTIES } from './config.js';
 import { ORDER_LABELS, PHASE_LABELS } from './orders.js';
 import { sectionOf, distOutOf, gateFrontPoint } from './world.js';
 
@@ -64,7 +64,7 @@ export function updateHUD(els, battle, pendingCaptureSide = null) {
   document.body.dataset.maxAttackersPerTarget = String(battle.metrics.maxAttackersPerTarget);
 
   els.time.textContent = fmtTime(battle.time);
-  els.timer.title = `เวลาศึก — เหลือ ${fmtTime(Math.max(0, CFG.timeLimit - battle.time))} จาก ${Math.round(CFG.timeLimit / 60)} นาที`;
+  els.timer.title = `เวลาศึก — เหลือ ${fmtTime(Math.max(0, CFG.timeLimit - battle.time))} จาก ${Math.round(CFG.timeLimit / 60)} นาที · ระดับ${DIFFICULTIES[CFG.difficulty]?.label || ''}`;
 
   els.gatePips.forEach(({ root, bar }, ring) => {
     const st = gateStatus(battle, ring);
@@ -204,7 +204,7 @@ export function showEnd(data) {
   const alivePct = Math.round((s.attackersAlive / deployed) * 100);
   const defPct = Math.round((s.defendersTotal / Math.max(1, s.defendersInitial)) * 100);
   document.getElementById('end-stats').innerHTML = `
-    เวลาที่ใช้: <b>${fmtTime(data.time)}</b><br>
+    ระดับความยาก: <b>${DIFFICULTIES[data.difficulty]?.label || 'ปกติ'}</b> · เวลาที่ใช้: <b>${fmtTime(data.time)}</b><br>
     กำแพงนอกที่ยึดได้: <b>${data.captured.filter(Boolean).length} / 4</b> ด้าน · ประตูที่ฝ่าได้: <b>${[data.gateOpen, ...(data.innerGatesOpen || [])].filter(Boolean).length} / 3</b> ชั้น<br>
     ยึดลานวัง: <b>${Math.round((data.palaceProgress || 0) * 100)}%</b><br>
     ทหารเราที่เหลือ: <b>${s.attackersAlive}</b> / ${deployed} นาย (${alivePct}%)<br>

@@ -12,30 +12,48 @@
   <div id="app"></div>
   <div id="selbox"></div>
 
-  <!-- Intro -->
+  <!-- Intro — ทัวร์แบบภาพ: ดูออกไวกว่าอ่าน ใช้ไอคอน/ป้ายแทนพารากราฟยาว รายละเอียดเต็มอยู่ใน ? -->
   <div id="intro" class="overlay">
-    <div class="modal">
+    <div class="modal tut">
       <div class="modal-title">⚔️ ศึกล้อมเมืองมังกร</div>
-      <div class="modal-sub">เกมสั่งทัพตีเมือง — สงครามจีนโบราณ 3D Low Poly</div>
-      <p>เจ้าคือแม่ทัพฝ่ายโจมตี 1,956 นาย ราชธานีมี<b>กำแพงสามชั้นแบบวังต้องห้าม</b> — เมืองนอก → เมืองชั้นใน → วังต้องห้าม — เป้าหมาย: <b>บุกให้ถึงลานวังชั้นในสุด แล้วยืนยึดให้ครบ 20 วินาที (คนเรามากกว่าองครักษ์ในลาน) ภายใน 15 นาที</b></p>
-      <p>ชั้นในมี<b>องครักษ์โล่ ง้าว ม้าองครักษ์ และพลธนูบนสันกำแพง</b> ที่เก่งกว่าทหารกำแพงนอก — ประตูชั้นในฟันพังได้ด้วยทหารราบ หรือพาดบันไดข้ามกำแพงชั้นในไปแงะเปิดจากด้านใน</p>
-      <div class="legend">
-        <div><span class="dot red"></span><b>หอก (24 กอง×4 ด้าน)</b> — แบกบันได ปีน ปะทะ หัวใจการตีเมือง</div>
-        <div><span class="dot bronze"></span><b>พลโล่ (12 กอง×4)</b> — เดินช้าแต่กันธนูให้ทัพรอบข้าง (65%) ไต่กำแพงทนกว่า</div>
-        <div><span class="dot green"></span><b>นักธนู (8 กอง×4)</b> — ยิงทหารทุกแนว; รับช่วงรถทุบเมื่อไร้ลูกเรือ และเปลี่ยนเป็นหอกหลังยึดกำแพง</div>
-        <div><span class="dot dark"></span><b>รถทุบ (6 คัน ฝั่งประตูใต้)</b> — ทุบประตู ~50 วิ; ถ้าลูกเรือตาย นักธนูจะเข้ารับช่วงอัตโนมัติ</div>
-        <div><span class="dot gold"></span><b>ทหารม้า (16 กอง)</b> — เข้าเมืองทางประตูเท่านั้น ไว้ไล่ล่าเก็บกวาด</div>
-        <div><span class="dot blue"></span><b>ทหารเมือง (เสื้อน้ำเงิน วงน้ำเงินใต้เท้า)</b> — วงฟ้า = พลธนู · <span class="dot violet"></span> วงม่วง = องครักษ์ชั้นใน/วัง · ซูมออกจะเห็นป้ายจำนวนทหารเมืองแต่ละกลุ่ม</div>
+      <div class="modal-sub">แม่ทัพฝ่ายโจมตี 1,956 นาย ประชิดราชธานีสามชั้น</div>
+
+      <div class="goal-flow" aria-label="เป้าหมาย: ฝ่าสามชั้นถึงลานวัง">
+        <div class="goal-step"><span class="goal-ic">🏯</span><b>เมืองนอก</b><small>ปีน/ทุบเข้า</small></div>
+        <span class="goal-arrow">→</span>
+        <div class="goal-step"><span class="goal-ic">🏮</span><b>เมืองชั้นใน</b><small>ฟัน/พาดบันได</small></div>
+        <span class="goal-arrow">→</span>
+        <div class="goal-step win"><span class="goal-ic">👑</span><b>ลานวัง</b><small>ยืนยึด 20 วิ = ชนะ!</small></div>
       </div>
-      <ul>
-        <li>🖱️ <b>ลากซ้ายเลือกกอง</b> (Shift เพิ่ม) · <b>ดับเบิลคลิก</b> = เลือกกองชนิดเดียวกันใกล้เคียง → <b>คลิกขวาสั่ง</b></li>
-        <li>🪨 กองหินบนกำแพง<b>มีจำกัด</b> — พลขนหินต้องแบกขึ้นจากคลังข้างใน กดดันต่อเนื่องเมื่อไหร่ หินจะไปไม่ทัน</li>
-        <li>🧠 ผู้บัญชาการเมืองจะ<b>เสริมกำลังข้ามด้าน สลับเป้าหิน และส่งม้าซอง</b>ออกไปฟันนักธนู/รถทุบของเจ้า — ต้องมีหอกคุมนักธนูไว้</li>
-        <li>⏱️ กำลังเสริมเมืองใช้เวลาเดินทาง — จังหวะ "ระหว่างเสริม" คือโอกาสทอง อย่ารุมพร้อมกันหมดเพราะเมืองจะรับได้ทุกด้าน</li>
-      </ul>
-      <p class="dim">🏯 ในเมือง: คลิกขวาจุดเดียว = ทุกกองมุ่งไปจุดนั้นเป็นแถวตอน ฟันศัตรูระหว่างทาง · คลิกขวาที่ประตูชั้นใน = ไปฟันประตู · คลิกขวาที่กำแพงชั้นใน = พาดบันไดข้าม · คลิกขวาที่กำแพงนอกจากในเมือง = ขึ้นบันไดในไปกวาดทหารบนกำแพง</p>
-      <p class="dim">🖥️ เมาส์: ลากซ้าย = เลือกกอง · คลิกขวา = สั่งทัพ · 👣 เดินทัพ · ⚔ โจมตี · ลากขวา = หมุนกล้อง · ล้อเมาส์ = ซูม · Ctrl/Alt+เลข = บันทึกกลุ่มกอง · เลข = เรียกกลุ่ม · F1–F4 = มุมด้าน · F5 = ลานวัง · 0 = มุมกว้าง · Space = พัก · ? = วิธีเล่น</p>
-      <p class="dim">📱 มือถือ: แตะกอง = เลือก · เลือกแล้วแตะที่กำแพง = สั่งโจมตี · แตะทุ่ง = หลอกล่อ · ปุ่ม 🔲 = ลากครอบเลือก · ลากนิ้วเดียว = หมุนกล้อง · บีบสองนิ้ว = ซูม · แตะการ์ดด้าน = มุมกล้อง</p>
+      <p class="tut-lede">คนเราในลานต้องมากกว่าองครักษ์ที่นั่น — ทำให้ทันภายใน 15 นาที</p>
+
+      <div class="tut-section-label">กองทัพเจ้า</div>
+      <div class="unit-grid">
+        <div class="unit-chip" tabindex="0" title="แบกบันได ปีน ปะทะ — หัวใจการตีเมือง"><span class="dot red"></span><b>หอก</b><small>96 กอง</small></div>
+        <div class="unit-chip" tabindex="0" title="เดินช้าแต่กันธนู 65% ให้ทัพรอบข้าง ไต่กำแพงทนกว่า"><span class="dot bronze"></span><b>พลโล่</b><small>48 กอง</small></div>
+        <div class="unit-chip" tabindex="0" title="ยิงกดกำแพง รับช่วงรถทุบเมื่อไร้ลูกเรือ เปลี่ยนเป็นหอกหลังยึดกำแพง"><span class="dot green"></span><b>นักธนู</b><small>32 กอง</small></div>
+        <div class="unit-chip" tabindex="0" title="ทุบประตูเมืองนอก ~50 วิ ถ้าลูกเรือตายนักธนูรับช่วงอัตโนมัติ"><span class="dot dark"></span><b>รถทุบ</b><small>6 คัน</small></div>
+        <div class="unit-chip" tabindex="0" title="เข้าเมืองทางประตูเท่านั้น ไว้ไล่ล่าเก็บกวาด"><span class="dot gold"></span><b>ทหารม้า</b><small>16 กอง</small></div>
+      </div>
+      <p class="tut-hint">แตะ/ชี้ไอคอนหน่วยเพื่อดูหน้าที่ · <span class="dot blue"></span>ทหารเมือง (น้ำเงิน) และ <span class="dot violet"></span>องครักษ์ชั้นใน (ม่วง) มีวงสีใต้เท้าให้เห็นชัดในสนาม</p>
+
+      <div class="tut-section-label">คำสั่งพื้นฐาน</div>
+      <div class="control-grid">
+        <div class="ctl"><kbd>ลากซ้าย</kbd><span>เลือกกอง</span></div>
+        <div class="ctl"><kbd>คลิกขวา</kbd><span>สั่งทัพ</span></div>
+        <div class="ctl"><kbd>ลากขวา</kbd><span>หมุนกล้อง</span></div>
+        <div class="ctl"><kbd>กลาง/WASD</kbd><span>เลื่อนกล้อง</span></div>
+        <div class="ctl"><kbd>ล้อเมาส์</kbd><span>ซูม</span></div>
+        <div class="ctl"><kbd>เลข 1–9</kbd><span>กลุ่มกอง</span></div>
+      </div>
+      <p class="tut-hint">ดูคำสั่งทั้งหมด กด <kbd class="inline">?</kbd> ได้ทุกเมื่อระหว่างเล่น</p>
+
+      <div class="tut-section-label">ระดับความยาก</div>
+      <fieldset class="difficulty" aria-label="ระดับความยาก">
+        <label for="diff-easy"><input type="radio" name="difficulty" value="easy" id="diff-easy"><span class="diff-ic">🌱</span><span class="diff-text"><b>ง่าย</b><small>เมืองเปราะกว่า · 18 นาที</small></span></label>
+        <label for="diff-normal"><input type="radio" name="difficulty" value="normal" id="diff-normal" checked><span class="diff-ic">⚔️</span><span class="diff-text"><b>ปกติ</b><small>ต้องวางแผน · 15 นาที</small></span></label>
+        <label for="diff-hard"><input type="radio" name="difficulty" value="hard" id="diff-hard"><span class="diff-ic">🔥</span><span class="diff-text"><b>ยาก</b><small>เมืองแน่นหนา · 14 นาที</small></span></label>
+      </fieldset>
       <button id="btn-intro-start" class="btn primary big">🎺 เปิดฉากศึก</button>
     </div>
   </div>
@@ -123,32 +141,85 @@
     </div>
   </div>
 
-  <!-- วิธีเล่น (เปิดจากเมนู ⋯ หรือปุ่ม ?) -->
+  <!-- วิธีเล่น (เปิดจากเมนู ⋯ หรือปุ่ม ?) — ไอคอน/ป้ายสั้น ๆ แทนพารากราฟยาว สแกนได้ไว -->
   <div id="help" class="overlay hidden">
-    <div class="modal help">
+    <div class="modal help tut">
       <div class="modal-title">❔ วิธีเล่น</div>
-      <p><b>ชนะ:</b> ฝ่ากำแพงสามชั้นเข้าไปยืนในลานวังต้องห้ามให้ครบ 20 วินาที โดยทหารเราในลานต้องมากกว่าองครักษ์ — ภายใน 15 นาที</p>
-      <div class="legend">
-        <div><span class="dot red"></span><b>หอก</b> — แบกบันได ปีน ปะทะ</div>
-        <div><span class="dot bronze"></span><b>พลโล่</b> — กันธนูให้ทัพรอบข้าง</div>
-        <div><span class="dot green"></span><b>นักธนู</b> — ยิงกดกำแพง</div>
-        <div><span class="dot dark"></span><b>รถทุบ</b> — ทุบประตูเมืองชั้นนอก</div>
-        <div><span class="dot gold"></span><b>ทหารม้า</b> — เข้าเมืองทางประตูเท่านั้น</div>
-        <div><span class="dot blue"></span><b>ทหารเมือง</b> — เสื้อน้ำเงิน วงน้ำเงินใต้เท้า (วงฟ้า = พลธนู)</div>
-        <div><span class="dot violet"></span><b>องครักษ์ชั้นใน/วัง</b> — วงม่วง เก่งกว่าทหารกำแพงนอก</div>
+
+      <div class="goal-flow compact" aria-label="เป้าหมาย: ฝ่าสามชั้นถึงลานวัง">
+        <div class="goal-step"><span class="goal-ic">🏯</span><small>เมืองนอก</small></div>
+        <span class="goal-arrow">→</span>
+        <div class="goal-step"><span class="goal-ic">🏮</span><small>เมืองชั้นใน</small></div>
+        <span class="goal-arrow">→</span>
+        <div class="goal-step win"><span class="goal-ic">👑</span><small>ยึดวัง 20 วิ = ชนะ</small></div>
       </div>
-      <h4>องครักษ์ชั้นใน</h4>
-      <p class="dim">พลธนูบนกำแพงชั้นในเล็งคนที่ฟันประตูก่อน · ซุ้มประตูเทน้ำมันเดือดทุก 6 วิ (มีวงแดงเตือน 1 วิ — ถอยออกจากวงทัน) · ประตูแตกแล้วแนวโล่จะตั้งขวางปากประตู ม้าองครักษ์ตีขนาบ · ถ้าหลุดเข้าไปน้อยจะโดนรุมตีสวน · พาดบันไดข้ามกำแพง = องครักษ์วิ่งมาดักจุดลง · บุกถึงลานวังแล้ว องครักษ์ชั้นในจะถอยเข้าไปช่วยวัง</p>
-      <h4>HUD</h4>
-      <p class="dim">แถบบน: เวลา · ประตูสามชั้น 🚪 🏮 ⛩ (แถบ = ความแข็งแรง) · 🏯 ความคืบหน้ายึดลานวัง — ชี้ค้างเพื่อดูรายละเอียด · แผนที่ย่อมุมซ้ายล่าง: จุดแดง = ทัพเรา, จุดน้ำเงิน = ทหารเมือง, ขอบกำแพงเป็นสีแดงเมื่อยึดได้ · ชี้ที่ขอบกำแพง/ประตูบนแผนที่ย่อเพื่อดูสถานะ · คลิกเพื่อย้ายกล้อง</p>
-      <h4>เมาส์</h4>
-      <p class="dim">ลากซ้าย = เลือกกอง (Shift เพิ่ม) · ดับเบิลคลิก = เลือกกองชนิดเดียวกันใกล้เคียง · คลิกขวา = สั่งทัพ (👣 เดินทัพ · ⚔ โจมตี) · ลากขวา = หมุนกล้อง · ล้อเมาส์ = ซูม</p>
-      <h4>ในเมือง</h4>
-      <p class="dim">คลิกขวาจุดเดียว = ทุกกองมุ่งไปจุดนั้นเป็นแถวตอน ฟันศัตรูระหว่างทาง · คลิกขวาที่ประตูชั้นใน = ไปฟันประตู · คลิกขวาที่กำแพงชั้นใน = พาดบันไดข้าม · คลิกขวาที่กำแพงนอกจากในเมือง = ขึ้นบันไดในไปกวาดทหารบนกำแพง</p>
-      <h4>ปุ่มลัด</h4>
-      <p class="dim" id="help-keys">Ctrl/Alt + 1–9 = บันทึกกองที่เลือกเป็นกลุ่ม · 1–9 = เรียกกลุ่ม (Shift = เพิ่มเข้าที่เลือกอยู่ · กดซ้ำเร็ว ๆ = กล้องไปหา) · Q = ทหารราบในเมืองทั้งหมด · . = กองที่ว่างงาน · F1–F4 = มุมด้าน · F5 = ลานวัง · 0 = มุมกว้าง · Space = หยุด/เล่น · H = ซ่อน/แสดง HUD · ? = วิธีเล่น · Esc = ยกเลิกเลือก</p>
-      <h4>มือถือ</h4>
-      <p class="dim">แตะกอง = เลือก · เลือกแล้วแตะกำแพง = สั่งโจมตี · แตะทุ่ง = หลอกล่อ · 🔲 = ลากครอบเลือก · ลากนิ้วเดียว = หมุนกล้อง · บีบสองนิ้ว = ซูม · แตะแผนที่ย่อ = ย้ายกล้อง · ชิปกลุ่มเหนือแผนที่ย่อ: แตะ = เรียก · แตะค้าง = บันทึกทับ · ＋ = บันทึกกลุ่มใหม่</p>
+
+      <div class="tut-section-label">กองทัพ</div>
+      <div class="unit-grid">
+        <div class="unit-chip" tabindex="0" title="แบกบันได ปีน ปะทะ — หัวใจการตีเมือง"><span class="dot red"></span><b>หอก</b></div>
+        <div class="unit-chip" tabindex="0" title="เดินช้าแต่กันธนู 65% ให้ทัพรอบข้าง"><span class="dot bronze"></span><b>พลโล่</b></div>
+        <div class="unit-chip" tabindex="0" title="ยิงกดกำแพง เปลี่ยนเป็นหอกหลังยึดได้"><span class="dot green"></span><b>นักธนู</b></div>
+        <div class="unit-chip" tabindex="0" title="ทุบประตูเมืองชั้นนอก"><span class="dot dark"></span><b>รถทุบ</b></div>
+        <div class="unit-chip" tabindex="0" title="เข้าเมืองทางประตูเท่านั้น ไล่ล่าเก็บกวาด"><span class="dot gold"></span><b>ทหารม้า</b></div>
+        <div class="unit-chip" tabindex="0" title="เสื้อน้ำเงิน วงใต้เท้าสีน้ำเงิน (ฟ้า = พลธนู)"><span class="dot blue"></span><b>ทหารเมือง</b></div>
+        <div class="unit-chip" tabindex="0" title="เก่งกว่าทหารกำแพงนอก วงใต้เท้าสีม่วง"><span class="dot violet"></span><b>องครักษ์</b></div>
+      </div>
+
+      <div class="tut-section-label">องครักษ์ชั้นใน — ตอบโต้ได้จริง</div>
+      <ul class="tip-list">
+        <li><span class="tip-ic">🏹</span>ธนูบนกำแพงชั้นในเล็งคนที่ฟันประตูก่อนเสมอ</li>
+        <li><span class="tip-ic">🔥</span>น้ำมันเดือดทุก 6 วิ — มีวงแดงเตือน 1 วิ ให้ถอยทัน</li>
+        <li><span class="tip-ic">🛡️</span>ประตูแตก → โล่ตั้งแนวขวางปากประตู ม้าองครักษ์ตีขนาบ</li>
+        <li><span class="tip-ic">🎯</span>กลุ่มเล็กที่หลุดเข้าไปจะโดนไล่ล่าจนจบ ไม่ว่าจะซ่อนตรงไหน</li>
+        <li><span class="tip-ic">🪜</span>พาดบันไดข้ามกำแพง → องครักษ์วิ่งมาดักจุดลง</li>
+      </ul>
+
+      <div class="tut-section-label">HUD &amp; แผนที่ย่อ</div>
+      <ul class="tip-list">
+        <li><span class="tip-ic">🚪🏮⛩</span>แถบบน = ความแข็งแรงประตูแต่ละชั้น</li>
+        <li><span class="tip-ic">🏯</span>แถบทอง = ความคืบหน้ายึดลานวัง (ชี้ค้างดูรายละเอียด)</li>
+        <li><span class="tip-ic">🗺️</span>จุดแดง = ทัพเรา · จุดน้ำเงิน = ทหารเมือง · คลิกแผนที่เพื่อย้ายกล้อง</li>
+      </ul>
+
+      <div class="tut-section-label">เมาส์</div>
+      <div class="control-grid">
+        <div class="ctl"><kbd>ลากซ้าย</kbd><span>เลือกกอง (Shift เพิ่ม)</span></div>
+        <div class="ctl"><kbd>ดับเบิลคลิก</kbd><span>เลือกชนิดเดียวกันใกล้ ๆ</span></div>
+        <div class="ctl"><kbd>คลิกขวา</kbd><span>สั่งทัพ (👣/⚔)</span></div>
+        <div class="ctl"><kbd>ลากขวา</kbd><span>หมุนกล้อง</span></div>
+        <div class="ctl"><kbd>ลากกลาง/WASD</kbd><span>เลื่อนกล้อง</span></div>
+        <div class="ctl"><kbd>ล้อเมาส์</kbd><span>ซูมเข้าใกล้ได้มาก</span></div>
+      </div>
+
+      <div class="tut-section-label">ในเมือง (คลิกขวา)</div>
+      <ul class="tip-list">
+        <li><span class="tip-ic">📍</span>จุดเดียว → ทุกกองมุ่งไปเป็นแถวตอน ฟันศัตรูระหว่างทาง</li>
+        <li><span class="tip-ic">🪓</span>ประตูชั้นใน → ไปฟันประตู</li>
+        <li><span class="tip-ic">🪜</span>กำแพงชั้นใน → พาดบันไดข้าม</li>
+        <li><span class="tip-ic">🧗</span>กำแพงนอก (จากในเมือง) → ขึ้นบันไดในกวาดทหารบนกำแพง</li>
+      </ul>
+
+      <div class="tut-section-label">ปุ่มลัด</div>
+      <div class="control-grid">
+        <div class="ctl"><kbd>Ctrl/Alt+เลข</kbd><span>บันทึกกลุ่มกอง</span></div>
+        <div class="ctl"><kbd>เลข 1–9</kbd><span>เรียกกลุ่ม (Shift เพิ่ม)</span></div>
+        <div class="ctl"><kbd>Q</kbd><span>ทหารราบในเมืองทั้งหมด</span></div>
+        <div class="ctl"><kbd>.</kbd><span>กองที่ว่างงาน</span></div>
+        <div class="ctl"><kbd>F1–F4 / F5</kbd><span>มุมด้าน / ลานวัง</span></div>
+        <div class="ctl"><kbd>0 · Space</kbd><span>มุมกว้าง · หยุด/เล่น</span></div>
+        <div class="ctl"><kbd>H · Esc</kbd><span>ซ่อน HUD · ยกเลิกเลือก</span></div>
+      </div>
+
+      <div class="tut-section-label">มือถือ</div>
+      <div class="control-grid">
+        <div class="ctl"><kbd>แตะกอง</kbd><span>เลือก</span></div>
+        <div class="ctl"><kbd>แตะกำแพง</kbd><span>สั่งโจมตี (เลือกกองก่อน)</span></div>
+        <div class="ctl"><kbd>🔲</kbd><span>โหมดลากครอบเลือก</span></div>
+        <div class="ctl"><kbd>ลาก 1 นิ้ว</kbd><span>หมุนกล้อง</span></div>
+        <div class="ctl"><kbd>บีบ 2 นิ้ว</kbd><span>ซูม</span></div>
+        <div class="ctl"><kbd>แตะแผนที่ย่อ</kbd><span>ย้ายกล้อง</span></div>
+      </div>
+
       <button id="btn-help-close" class="btn primary big">กลับสู่สนามรบ</button>
     </div>
   </div>

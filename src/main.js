@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { initScene, updateCameraTween } from './scene.js';
 import { buildCity, animateCityFlags, openGateDoors } from './city.js';
-import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, TEAM_COLORS, genMission } from './config.js';
+import { CFG, SIDE_NAMES, GATE_NAMES, WALL_NAMES, TEAM_COLORS, DIFFICULTIES, genMission } from './config.js';
 import { Battle } from './battle.js';
 import { SIDE_VECS, classifyOrderPoint, sectionOf } from './world.js';
 import * as UI from './ui.js';
@@ -11,10 +11,11 @@ import { initAudio, setMuted, isMuted, sfx } from './audio.js';
 const { renderer, scene, camera, controls } = initScene(document.getElementById('app'));
 const city = buildCity(scene);
 
-// กล้องแบบ RTS: ซ้าย = เลือกทหาร (ไม่หมุน), ขวา = หมุนกล้อง, ล้อเมาส์ = ซูม
-controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+// กล้องแบบ RTS: ซ้าย = เลือกทหาร (ไม่หมุน), ขวา = หมุนกล้อง, กลาง = เลื่อนมุมมอง (pan), ล้อเมาส์ = ซูม
+// (ล้อเมาส์ซูมได้เองอยู่แล้วไม่ต้องพึ่งปุ่มกลาง จึงปลดปุ่มกลางมาใช้ pan แทนการซูมซ้ำซ้อน)
+controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 controls.enablePan = true;
-controls.panSpeed = 0.8;
+controls.panSpeed = 1;
 // จอสัมผัส: นิ้วเดียว = หมุนกล้อง, สองนิ้ว = ซูม/แพน
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
@@ -25,7 +26,18 @@ if (isTouch) {
   document.getElementById('touchbar').classList.remove('hidden');
 }
 
-let mission = genMission();
+// ระดับความยากที่เลือกไว้บนหน้าเริ่มเกม (จำไว้ข้ามรอบเล่น)
+function selectedDifficulty() {
+  return document.querySelector('input[name="difficulty"]:checked')?.value || 'normal';
+}
+try {
+  const saved = localStorage.getItem('siege.difficulty');
+  if (saved && DIFFICULTIES[saved]) document.getElementById(`diff-${saved}`).checked = true;
+} catch { /* ใช้ระดับปกติ */ }
+document.querySelectorAll('input[name="difficulty"]').forEach((input) => {
+  input.addEventListener('change', () => { try { localStorage.setItem('siege.difficulty', input.value); } catch { /* ไม่จำก็ได้ */ } });
+});
+let mission = genMission(undefined, selectedDifficulty());
 let battle = null;
 let speed = 1;
 let lastSpeed = 1;
@@ -51,12 +63,47 @@ window.__game = {
   focusSide,
   focusWide,
   focusPalace,
-  startWithSeed(seed) { mission = genMission(seed); startBattle(false); },
+  startWithSeed(seed, difficulty = selectedDifficulty()) { mission = genMission(seed, difficulty); startBattle(false); },
 };
 
 const raycaster = new THREE.Raycaster();
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const mouseNdc = new THREE.Vector2();
+
+// ---------- เลื่อนกล้องด้วยคีย์บอร์ด (WASD / ลูกศร) — คู่กับลาก-กลางเมาส์ ----------
+// แยกจาก keydown หลักเพราะต้องใช้ได้ตลอด ไม่ผูกกับสถานะ battle และต้องเป็นสถานะ "กดค้าง" ต่อเนื่อง
+const PAN_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const heldPanKeys = new Set();
+window.addEventListener('keydown', (e) => {
+  if (!PAN_CODES.has(e.code) || e.target.closest?.('select, input, textarea')) return;
+  heldPanKeys.add(e.code);
+  if (e.code.startsWith('Arrow')) e.preventDefault(); // กันหน้าเว็บเลื่อนตาม
+});
+window.addEventListener('keyup', (e) => heldPanKeys.delete(e.code));
+window.addEventListener('blur', () => heldPanKeys.clear()); // สลับหน้าต่างขณะกดค้าง ไม่ให้เลื่อนต่อเอง
+
+const _panFwd = new THREE.Vector3();
+const _panRight = new THREE.Vector3();
+const _panMove = new THREE.Vector3();
+function applyKeyboardPan(dt) {
+  if (!heldPanKeys.size) return;
+  camera.__focusTween = null; // ผู้เล่นสั่งเลื่อนเอง ยกเลิกการเลื่อนกล้องอัตโนมัติที่ค้างอยู่
+  // แกนขวา/หน้าของกล้องแบบแนวราบ (กล้องไม่มีการหมุนรอบแกนมอง จึงตัดแกน Y ออกได้ตรง ๆ)
+  _panRight.setFromMatrixColumn(camera.matrix, 0).setY(0).normalize();
+  _panFwd.crossVectors(camera.up, _panRight).normalize();
+  _panMove.set(0, 0, 0);
+  if (heldPanKeys.has('KeyW') || heldPanKeys.has('ArrowUp')) _panMove.add(_panFwd);
+  if (heldPanKeys.has('KeyS') || heldPanKeys.has('ArrowDown')) _panMove.sub(_panFwd);
+  if (heldPanKeys.has('KeyD') || heldPanKeys.has('ArrowRight')) _panMove.add(_panRight);
+  if (heldPanKeys.has('KeyA') || heldPanKeys.has('ArrowLeft')) _panMove.sub(_panRight);
+  if (_panMove.lengthSq() < 1e-8) return;
+  // ความเร็วแปรตามระยะซูม — ซูมใกล้เลื่อนช้า/ละเอียด ซูมไกลเลื่อนไว ไม่ต้องกดค้างนาน
+  const dist = camera.position.distanceTo(controls.target);
+  const speed = THREE.MathUtils.clamp(dist * 1.1, 16, 260);
+  _panMove.normalize().multiplyScalar(speed * dt);
+  camera.position.add(_panMove);
+  controls.target.add(_panMove);
+}
 
 // ---------- กล้อง ----------
 function setFocus(pos, target) {
@@ -217,7 +264,8 @@ function pickCompaniesInRect(x0, y0, x1, y1) {
 // ---------- โฟลว์เกม ----------
 function startBattle(rerollMission) {
   if (battle) { scene.remove(battle.group); battle = null; }
-  if (rerollMission) mission = genMission();
+  if (rerollMission) mission = genMission(undefined, selectedDifficulty());
+  else if (mission.difficulty !== selectedDifficulty()) mission = genMission(mission.seed, selectedDifficulty());
   city.sides.forEach((s) => s.flagMat.color.set(TEAM_COLORS.city));
   city.palaceFlag.flagMat.color.set(TEAM_COLORS.city);
   for (const g of city.gates) openGateDoors(g.doorL, g.doorR, 0);
@@ -687,7 +735,7 @@ renderer.setAnimationLoop(() => {
   }
 
   animateCityFlags(city.sides, dt);
-  if (!unitViewSoldier) updateCameraTween(camera, controls, dt);
+  if (!unitViewSoldier) { applyKeyboardPan(dt); updateCameraTween(camera, controls, dt); }
   const hiddenFollowMesh = unitViewSoldier?.mesh;
   if (hiddenFollowMesh) hiddenFollowMesh.visible = false;
   renderer.render(scene, camera);

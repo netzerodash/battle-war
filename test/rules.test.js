@@ -8,7 +8,7 @@ import {
   gateRoute, constrainFieldOutsideWall, stairPoints, wallRoute, SIDE_VECS,
   constrainToRegion, regionOf, classifyOrderPoint, gateFrontPoint, gateInsidePoint, RINGS,
 } from '../src/world.js';
-import { CFG, mulberry32 } from '../src/config.js';
+import { CFG, mulberry32, applyDifficulty, genMission, DIFFICULTIES } from '../src/config.js';
 import { Battle, orderVisual, cityRallyPoint } from '../src/battle.js';
 import { buildCity, gateDoorAngle } from '../src/city.js';
 import { assaultRoute } from '../src/navigation.js';
@@ -54,7 +54,8 @@ test('starting armies keep their intended size across the three-ring city', () =
     + CFG.reserveSquads * CFG.squadSize
     + guards(CFG.garrison.inner) + guards(CFG.garrison.palace);
   assert.equal(attackerInfantry + attackerRams + attackerCavalry, 1956);
-  assert.equal(defenders, 1238);
+  // ทัพเมืองต้องเล็กกว่าทัพบุก แต่ใหญ่พอให้การรุมมั่วเสียเปรียบ (ตัวเลขจูนด้วย npm run sim)
+  assert.ok(defenders < 1956 && defenders > 1956 * 0.6, `defenders ${defenders}`);
 });
 
 test('move and attack orders use unmistakably different map symbols', () => {
@@ -721,6 +722,45 @@ test('reserve squads stop climbing toward a wall that has just been captured', (
   assert.equal(sq.state, 'idle');
 });
 
+test('reserve squads hunt every straggler in the outer city, not just once three invaders appear', () => {
+  const squad = (x) => ({ state: 'idle', soldiers: [{ alive: true, pos: new THREE.Vector3(x, 0, 0), homePost: new THREE.Vector3(x, 0, 0) }] });
+  const near = squad(0), far = squad(100);
+  const invader = { alive: true, zone: 'city', pos: new THREE.Vector3(2, 0, 0) };
+  const battle = {
+    defenses: [{}, {}, {}, {}], captured: [true, true, true, true], laddersOf: () => [],
+    cityAttackers: new Set([invader]),
+  };
+  ReserveForce.prototype.dispatch.call({ battle, squads: [near, far] });
+  assert.equal(near.state, 'guard', 'a single straggler should already recruit a hunter');
+  assert.equal(far.state, 'idle', 'the farther squad should stay in reserve, not both chase one target');
+});
+
+test('a hunting squad keeps chasing from where it currently stands, not from its original post', () => {
+  // กองไล่ออกมาไกลจากจุดตั้งเดิมแล้ว (เกิน 45) แต่ตัวกองเองยังอยู่ใกล้เป้าหมาย — ต้องไล่ต่อ ไม่ใช่เลิกไล่
+  const leader = { alive: true, inCombat: false, stair: null, pos: new THREE.Vector3(80, 0, 0), state: 'order' };
+  const sq = { state: 'guard', soldiers: [leader] };
+  const invader = { alive: true, zone: 'city', pos: new THREE.Vector3(82, 0, 0) };
+  const battle = { captured: [false, false, false, false], cityAttackers: new Set([invader]), nearestInvader: Battle.prototype.nearestInvader };
+  ReserveForce.prototype.updateSquad.call({ battle }, sq);
+  assert.equal(sq.state, 'guard', 'still close to the target, pursuit must not be abandoned');
+  assert.equal(leader.orderTarget, invader.pos);
+});
+
+test('inner guards always counter-attack a small straggler group even after taking heavy casualties themselves', () => {
+  const garrison = new Garrison({ rng: () => 0.5, group: new THREE.Group() });
+  const intruder = (x, z) => ({ alive: true, zone: 'inner', pos: new THREE.Vector3(x, 0, z) });
+  // จำลองว่าองครักษ์ชั้นในตายไปเกือบหมด เหลือน้อยกว่าศัตรู×2 (สัดส่วนไม่ถึง counterRatio)
+  const survivors = garrison.soldiers.filter((s) => s.zone === 'inner').slice(0, 8);
+  for (const s of garrison.soldiers) if (s.zone === 'inner' && !survivors.includes(s)) s.alive = false;
+  garrison.battle = {
+    ...garrison.battle, companies: [], palace: { progress: 0 },
+    cityAttackers: new Set([intruder(20, 30), intruder(22, 30), intruder(24, 30), intruder(26, 30), intruder(28, 30)]),
+    innerGates: [{ ring: 1, open: false, started: false }, { ring: 2, open: false, started: false }],
+  };
+  garrison.think();
+  assert.ok(survivors.every((s) => s.intent === 'counter-attack'), 'a small group must always be hunted, regardless of how depleted the garrison is');
+});
+
 test('routes into the palace pass every gate in order and stop at the first closed one', () => {
   const from = cityRallyPoint();
   const target = new THREE.Vector3(0, 0, -4);
@@ -986,10 +1026,40 @@ test('guards seal an opened gate, intercept ladders, and fall back into a threat
   const inner = garrison.soldiers.filter((s) => s.zone === 'inner');
   assert.equal(inner.filter((s) => s.intent === 'intercept-ladder').length, CFG.garrison.ai.interceptors);
   const shields = inner.filter((s) => s.utype === 'guardShield');
-  assert.ok(shields.every((s) => s.homePost.z > CFG.rings[1].half - 5), 'shields re-form across the breach');
+  const inside = gateInsidePoint(1);
+  assert.ok(shields.every((s) => s.homePost.distanceTo(inside) < 8), 'shields re-form across the breach');
   garrison.battle.palace.progress = 0.2;
   garrison.battle.innerGates[1].open = true;
   garrison.think();
   assert.ok(inner.every((s) => s.relocating && s.intent === 'fall-back-to-palace'));
   assert.ok(inner.every((s) => regionOf(s.homePost) === 3 && s.waypoints.at(-1) === s.homePost));
+});
+
+test('difficulty presets scale defenders, gates, and the palace hold, then restore normal exactly', () => {
+  applyDifficulty('normal');
+  const normal = {
+    hp: CFG.defender.hp, gate: CFG.innerGates.hp[1], hold: CFG.palace.holdTime, shields: CFG.garrison.inner.shields,
+    reserves: CFG.reserveSquads, time: CFG.timeLimit, ram: CFG.unit.ram.batterRate,
+  };
+  applyDifficulty('hard');
+  assert.ok(CFG.defender.hp > normal.hp && CFG.innerGates.hp[1] > normal.gate && CFG.palace.holdTime > normal.hold);
+  assert.ok(CFG.garrison.inner.shields > normal.shields && CFG.reserveSquads > normal.reserves && CFG.unit.ram.batterRate < normal.ram);
+  applyDifficulty('easy');
+  assert.ok(CFG.defender.hp < normal.hp && CFG.timeLimit > normal.time && CFG.garrison.inner.shields < normal.shields);
+  applyDifficulty('hard');
+  applyDifficulty('normal');
+  assert.deepEqual({
+    hp: CFG.defender.hp, gate: CFG.innerGates.hp[1], hold: CFG.palace.holdTime, shields: CFG.garrison.inner.shields,
+    reserves: CFG.reserveSquads, time: CFG.timeLimit, ram: CFG.unit.ram.batterRate,
+  }, normal, 'switching levels back and forth must not drift');
+  assert.equal(CFG.difficulty, 'normal');
+});
+
+test('missions remember their difficulty and scale wall garrisons with it', () => {
+  assert.equal(genMission(5, 'hard').difficulty, 'hard');
+  assert.equal(genMission(5, 'nonsense').difficulty, 'normal');
+  assert.ok(genMission(5, 'hard').sides[0].melee > genMission(5, 'normal').sides[0].melee);
+  assert.ok(genMission(5, 'easy').sides[0].melee < genMission(5, 'normal').sides[0].melee);
+  assert.deepEqual(Object.keys(DIFFICULTIES), ['easy', 'normal', 'hard']);
+  applyDifficulty('normal');
 });
