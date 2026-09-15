@@ -141,3 +141,42 @@ export class DefenderGroupLabels {
     }
   }
 }
+
+// ---------- ป้ายเลขกลุ่มเหนือธงกอง ----------
+const BADGE_TEXTURES = new Map();
+function badgeTexture(n) {
+  if (BADGE_TEXTURES.has(n)) return BADGE_TEXTURES.get(n);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(28, 18, 10, 0.9)';
+  ctx.strokeStyle = '#e8c14a';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(5, 5, 54, 54, 12);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#ffe27a';
+  ctx.font = 'bold 40px "Noto Sans Thai", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(n), 32, 35);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  BADGE_TEXTURES.set(n, texture);
+  return texture;
+}
+
+export function groupBadgeSprite() {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false }));
+  sprite.renderOrder = 24;
+  sprite.userData.n = null;
+  return sprite;
+}
+
+export function setGroupBadge(sprite, n) {
+  if (sprite.userData.n === n) return;
+  sprite.userData.n = n;
+  sprite.material.map = badgeTexture(n);
+  sprite.material.needsUpdate = true;
+}

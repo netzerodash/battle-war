@@ -117,6 +117,17 @@ export function updateHUD(els, battle, pendingCaptureSide = null) {
   }
 }
 
+// ชิปกลุ่มกอง — วาดใหม่เฉพาะเมื่อมีอะไรเปลี่ยน (คลิกไม่หลุดเพราะ DOM ถูกแทนที่บ่อย)
+export function renderGroupBar(el, groups, hasSelection) {
+  const free = [1, 2, 3, 4, 5, 6, 7, 8, 9].find((n) => !groups.some((g) => g.n === n));
+  const key = `${groups.map((g) => `${g.n}:${g.count}:${g.active ? 1 : 0}`).join(',')}|${hasSelection}|${free}`;
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  const chips = groups.map((g) => `<button class="gchip${g.active ? ' active' : ''}" data-n="${g.n}" title="กลุ่ม ${g.n}: ${g.count} กอง — กด ${g.n} เพื่อเรียก · กดซ้ำเร็ว ๆ = กล้องไปหา · คลิกขวา/แตะค้าง = บันทึกกองที่เลือกทับ">${g.n}<small>${g.count}</small></button>`);
+  if (hasSelection && free) chips.push(`<button class="gchip add" data-add="${free}" title="บันทึกกองที่เลือกเป็นกลุ่ม ${free} (Ctrl/Alt+${free})">＋${free}</button>`);
+  el.innerHTML = chips.join('');
+}
+
 // ข้อความเมื่อชี้บนแผนที่ย่อ: สถานะกำแพงนอกด้านนั้น หรือสถานะประตู
 export function mapTip(battle, x, z) {
   const m = distOutOf({ x, z });

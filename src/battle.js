@@ -18,7 +18,7 @@ import { SpatialHash } from './spatial-hash.js';
 import { EngagementRegistry } from './engagement.js';
 import { assaultRoute, fieldRoute, nextHop } from './navigation.js';
 import { chooseTacticalTarget } from './tactical-ai.js';
-import { DefenderMarkers, DefenderGroupLabels, markerScaleForDistance } from './markers.js';
+import { DefenderMarkers, DefenderGroupLabels, markerScaleForDistance, groupBadgeSprite, setGroupBadge } from './markers.js';
 
 const SPARK_MATS = {
   red: new THREE.MeshBasicMaterial({ color: 0xc03028 }),
@@ -228,6 +228,7 @@ export class Battle {
     this.cityAttackers = new Set();
     this.gateOpeners = new Set();
     this.selection = new Set();
+    this.controlGroups = new Map(); // เลขกลุ่ม 1–9 → กองร้อย (ปุ่มลัดแบบเกม RTS)
     this.hover = null;
     this.stairs = [0, 1, 2, 3].map((s) => new StairChannel(s));
     this.captured = [false, false, false, false];
@@ -502,6 +503,85 @@ export class Battle {
   }
 
   setHover(comp) { this.hover = comp; }
+
+  // ---------- กลุ่มกอง (Ctrl/Alt+เลข = บันทึก · เลข = เรียก) ----------
+  saveControlGroup(n) {
+    const members = [...this.selection].filter((c) => c.aliveSoldiers.length > 0);
+    if (!members.length) return 0;
+    this.controlGroups.set(n, members);
+    this.refreshGroupNumbers();
+    this.onEvent('group_saved', { n, count: members.length });
+    return members.length;
+  }
+
+  // สมาชิกที่ยังมีชีวิต — กองที่ตายหมดหลุดจากกลุ่มเอง กลุ่มที่ว่างถูกลบ
+  groupMembers(n) {
+    const members = (this.controlGroups.get(n) || []).filter((c) => c.aliveSoldiers.length > 0);
+    if (members.length) this.controlGroups.set(n, members);
+    else this.controlGroups.delete(n);
+    return members;
+  }
+
+  recallControlGroup(n, additive = false) {
+    const members = this.groupMembers(n);
+    if (!members.length) { this.refreshGroupNumbers(); return 0; }
+    if (!additive) this.clearSelection();
+    for (const c of members) if (!c.selected) { c.selected = true; this.selection.add(c); }
+    return members.length;
+  }
+
+  groupCenter(n) {
+    const members = this.groupMembers(n);
+    if (!members.length) return null;
+    const c = new THREE.Vector3();
+    for (const m of members) c.add(m.flagPos);
+    return c.multiplyScalar(1 / members.length).setY(0);
+  }
+
+  // ธงกองแสดงเลขกลุ่มที่เล็กที่สุดที่กองนั้นอยู่
+  refreshGroupNumbers() {
+    for (const c of this.companies) c.groupNumber = null;
+    for (const n of [...this.controlGroups.keys()].sort((a, b) => a - b)) {
+      for (const c of this.controlGroups.get(n)) if (c.groupNumber == null) c.groupNumber = n;
+    }
+  }
+
+  controlGroupSummary() {
+    const out = [];
+    for (let n = 1; n <= 9; n++) {
+      if (!this.controlGroups.has(n)) continue;
+      const members = this.groupMembers(n);
+      if (!members.length) continue;
+      const active = members.length === this.selection.size && members.every((c) => this.selection.has(c));
+      out.push({ n, count: members.length, active });
+    }
+    return out;
+  }
+
+  // Q: ทหารราบทุกกองที่อยู่ในกำแพงเมืองแล้ว (ชั้นใดก็ได้)
+  selectInsideInfantry() {
+    this.clearSelection();
+    for (const c of this.companies) {
+      if (c.kind !== 'inf' || c.ctype === 'archer') continue;
+      if (!c.aliveSoldiers.some((s) => isInsideZone(s.zone))) continue;
+      c.selected = true;
+      this.selection.add(c);
+    }
+    return this.selection.size;
+  }
+
+  // . : กองที่ไม่ได้ทำคำสั่งอะไรอยู่และไม่ได้ปะทะ
+  selectIdleCompanies() {
+    const idle = new Set(['idle', 'hold', 'holdAt', 'done']);
+    this.clearSelection();
+    for (const c of this.companies) {
+      const alive = c.aliveSoldiers;
+      if (!alive.length || !idle.has(c.state) || alive.some((s) => s.inCombat)) continue;
+      c.selected = true;
+      this.selection.add(c);
+    }
+    return this.selection.size;
+  }
 
   issueAssault(side, ladder, archers, rams, cav) {
     const tactics = { formation: this.commandFormation, stance: this.commandStance };
@@ -2134,6 +2214,19 @@ export class Battle {
     this.defGroupT -= dt;
     if (this.defGroupT <= 0) { this.defGroupT = 0.4; this.defGroups = this.defenderGroups(); }
     this.defLabels.update(this.defGroups, cameraDist, camera);
+    // เลขกลุ่มเหนือธงกอง (สร้างเมื่อกองถูกบันทึกเข้ากลุ่มครั้งแรก)
+    const badgeScale = markerScaleForDistance(cameraDist) * 1.5;
+    for (const c of this.companies) {
+      const show = c.groupNumber != null && c.aliveSoldiers.length > 0;
+      if (!show && !c.groupBadge) continue;
+      if (!c.groupBadge) { c.groupBadge = groupBadgeSprite(); this.group.add(c.groupBadge); }
+      c.groupBadge.visible = show;
+      if (!show) continue;
+      setGroupBadge(c.groupBadge, c.groupNumber);
+      const p = c.flagPos;
+      c.groupBadge.position.set(p.x, p.y + (c.kind === 'cav' ? 5.6 : 4.7) + badgeScale * 0.3, p.z);
+      c.groupBadge.scale.set(badgeScale, badgeScale, 1);
+    }
   }
 
   // ข้อมูลสำหรับ HUD

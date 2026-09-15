@@ -207,8 +207,25 @@ body:not(.touch) #touchbar { display: none !important; }
   padding: 4px 5px;
 }
 .btn.cmd { padding: 5px 9px; font-size: 12px; white-space: nowrap; }
-.cmd-groups { display: flex; gap: 4px; flex-wrap: wrap; }
-.cmd-groups:empty { display: none; }
+/* ชิปกลุ่มกองเหนือแผนที่ย่อ (เรียกได้แม้ยังไม่ได้เลือกกอง) */
+.group-bar {
+  position: fixed; left: 12px; bottom: 210px;
+  display: flex; flex-wrap: wrap; gap: 4px; max-width: 190px;
+  z-index: 30;
+}
+.group-bar:empty { display: none; }
+#minimap-wrap.collapsed + .group-bar { bottom: 50px; }
+.gchip {
+  font: inherit; font-size: 12px; font-weight: 700; color: var(--text);
+  display: inline-flex; align-items: baseline; gap: 3px;
+  padding: 2px 7px; border-radius: 6px;
+  background: var(--panel-soft); border: 1px solid var(--panel-line);
+  cursor: pointer; touch-action: manipulation;
+}
+.gchip small { font-size: 10px; font-weight: 400; color: var(--dim); }
+.gchip.active { border-color: var(--gold); color: #ffe27a; }
+.gchip.add { border-style: dashed; color: var(--dim); }
+.gchip:hover, .gchip:focus-visible { background: #3a2c1c; outline: none; }
 
 .banner {
   position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
@@ -307,6 +324,7 @@ body.hud-off #hud > :not(#toasts):not(#banner) { display: none !important; }
   .pipbar { display: none; }
   .pipbar.wide { display: block; width: 36px; }
   #minimap-wrap { width: 124px; height: 124px; left: 8px; bottom: 8px; }
+  .group-bar { left: 8px; bottom: 138px; max-width: 124px; }
   .cmd-bar { left: 140px; right: 8px; bottom: 8px; padding: 5px 8px; }
   .cmd-controls select { max-width: 74px; font-size: 11px; }
   .btn.cmd { padding: 4px 7px; font-size: 11px; }
@@ -315,6 +333,8 @@ body.hud-off #hud > :not(#toasts):not(#banner) { display: none !important; }
 /* จอสัมผัส: ยกแผนที่ย่อ/แถบคำสั่งขึ้นเหนือแถบปุ่มกล้องด้านล่าง */
 body.touch .cmd-bar { bottom: 64px; }
 body.touch #minimap-wrap { bottom: 64px; }
+body.touch .group-bar { bottom: 262px; }
+@media (max-width: 640px) { body.touch .group-bar { bottom: 194px; } }
 body.touch #toasts { bottom: 128px; }
 
 /* สีฝ่ายเมืองในคำอธิบาย (ตรงกับวงใต้เท้าในฉาก) */

@@ -289,6 +289,7 @@ function onBattleEvent(type, data) {
     case 'gate_opening': UI.toast('🔧 ทหารเรากำลังแงะประตูเมือง...'); break;
     case 'gate_open': UI.toast('🚪 ประตูเมืองชั้นนอกเปิดแล้ว! เทกองเข้าเมือง แล้วฝ่าประตูชั้นในต่อ', 'big blue'); sfx.cheer(); break;
     case 'evacuate': UI.toast(`🏰 ฝ่ายเมืองสละกำแพงด้าน${SIDE_NAMES[data.side]} ลงมารวมพลขั้นสุดท้าย!`); sfx.hornLow(); break;
+    case 'group_saved': UI.toast(`บันทึกกลุ่ม ${data.n}: ${data.count} กอง — กด ${data.n} เพื่อเรียก`, 'good'); break;
     case 'end': UI.showEnd(data); if (data.result === 'win') sfx.fanfareWin(); else sfx.fanfareLose(); break;
   }
 }
@@ -457,13 +458,38 @@ document.querySelectorAll('.hud-speed .spd[data-speed]').forEach((b) => {
 window.addEventListener('keydown', (e) => {
   if (!battle) return;
   if (e.target.closest?.('select, input, textarea')) return;
-  if (e.key === '?') { toggleHelp(); return; }
-  if (e.key === 'h' || e.key === 'H') { toggleHud(); return; }
+  if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) { toggleHelp(); return; }
+  if (e.code === 'KeyH' && !e.ctrlKey && !e.metaKey) { toggleHud(); return; }
   if (e.key === 'Escape' && !helpEl.classList.contains('hidden')) { toggleHelp(false); return; }
   if (e.key === 'Escape' && !hudMenu.classList.contains('hidden')) { setMenu(false); return; }
-  if (e.key >= '1' && e.key <= '4') focusSide(+e.key - 1);
-  else if (e.key === '5') focusPalace();
-  else if (e.key === '0') focusWide();
+  // กลุ่มกองแบบเกม RTS — ใช้รหัสปุ่ม (e.code) จึงใช้ได้แม้คีย์บอร์ดเป็นภาษาไทย
+  const digit = /^Digit([1-9])$/.exec(e.code);
+  if (digit) {
+    e.preventDefault();
+    const n = +digit[1];
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      if (!battle.saveControlGroup(n)) UI.toast('เลือกกองก่อน แล้วค่อยกด Ctrl/Alt + เลขเพื่อบันทึกกลุ่ม', 'bad');
+    } else {
+      recallGroup(n, e.shiftKey);
+    }
+    return;
+  }
+  if (/^F[1-5]$/.test(e.key)) {
+    e.preventDefault();
+    if (e.key === 'F5') focusPalace(); else focusSide(+e.key.slice(1) - 1);
+    return;
+  }
+  if (e.code === 'KeyQ' && !e.ctrlKey && !e.metaKey) {
+    const n = battle.selectInsideInfantry();
+    UI.toast(n ? `เลือกทหารราบในเมือง ${n} กอง` : 'ยังไม่มีทหารราบในเมือง', n ? '' : 'bad');
+    return;
+  }
+  if (e.code === 'Period') {
+    const n = battle.selectIdleCompanies();
+    UI.toast(n ? `เลือกกองที่ว่างงาน ${n} กอง` : 'ไม่มีกองที่ว่างงาน', n ? '' : 'bad');
+    return;
+  }
+  if (e.key === '0') focusWide();
   else if (e.key === 'Escape') {
     if (unitViewSoldier) leaveUnitView();
     else battle.clearSelection();
@@ -562,6 +588,44 @@ function viewCorners() {
   });
 }
 
+// ---------- กลุ่มกอง: ชิปเหนือแผนที่ย่อ + เรียกด้วยปุ่มเลข ----------
+const groupBar = document.getElementById('group-bar');
+let lastRecall = { n: 0, t: 0 };
+function recallGroup(n, additive = false) {
+  if (!battle) return;
+  const k = battle.recallControlGroup(n, additive);
+  if (!k) { UI.toast(`กลุ่ม ${n} ยังว่าง — เลือกกองแล้วกด Ctrl/Alt+${n} เพื่อบันทึก`, 'bad'); return; }
+  const now = performance.now();
+  if (lastRecall.n === n && now - lastRecall.t < 350) {
+    const c = battle.groupCenter(n);
+    if (c) lookAtGround(c.x, c.z, false);
+  }
+  lastRecall = { n, t: now };
+}
+let chipHold = null;
+groupBar.addEventListener('click', (e) => {
+  const chip = e.target.closest('.gchip');
+  if (!chip || !battle) return;
+  if (chip.dataset.add) battle.saveControlGroup(+chip.dataset.add);
+  else if (chip.dataset.n && !chip.dataset.held) recallGroup(+chip.dataset.n, e.shiftKey);
+  delete chip.dataset.held;
+});
+groupBar.addEventListener('contextmenu', (e) => {
+  const chip = e.target.closest('.gchip[data-n]');
+  if (!chip || !battle) return;
+  e.preventDefault();
+  battle.saveControlGroup(+chip.dataset.n);
+});
+// แตะค้างที่ชิป = บันทึกกองที่เลือกทับกลุ่มนั้น (จอสัมผัส)
+groupBar.addEventListener('pointerdown', (e) => {
+  const chip = e.target.closest('.gchip[data-n]');
+  if (!chip || e.pointerType !== 'touch') return;
+  chipHold = setTimeout(() => {
+    if (battle && battle.selection.size) { battle.saveControlGroup(+chip.dataset.n); chip.dataset.held = '1'; }
+  }, 550);
+});
+for (const type of ['pointerup', 'pointercancel', 'pointerleave']) groupBar.addEventListener(type, () => clearTimeout(chipHold));
+
 // ---------- ลูปหลัก ----------
 let drumT = 1.5;
 renderer.setAnimationLoop(() => {
@@ -614,6 +678,7 @@ renderer.setAnimationLoop(() => {
     if (hudTimer > 0.15) {
       hudTimer = 0;
       UI.updateHUD(hudEls, battle, pendingCaptureSide);
+      UI.renderGroupBar(groupBar, battle.controlGroupSummary(), battle.selection.size > 0);
       minimap.draw(battle, viewCorners());
       const hoverC = pickCompany(mousePos.x, mousePos.y, 26);
       battle.setHover(hoverC);

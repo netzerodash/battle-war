@@ -881,3 +881,48 @@ test('minimap draws north up and maps clicks back to the same world point', asyn
   const [x, z] = minimapToWorld(px, py, 190);
   assert.ok(Math.abs(x - 50) < 1e-9 && Math.abs(z + 80) < 1e-9);
 });
+
+test('control groups save, recall, prune dead companies, and badge the lowest group', () => {
+  const company = (id, alive = true) => ({ id, selected: false, kind: 'inf', ctype: 'spear', state: 'holdAt', flagPos: new THREE.Vector3(id, 0, 0), aliveSoldiers: alive ? [{ zone: 'field' }] : [] });
+  const a = company(1), b = company(2), c = company(3);
+  const events = [];
+  const battle = {
+    companies: [a, b, c], selection: new Set(), controlGroups: new Map(), onEvent: (t, d) => events.push([t, d]),
+  };
+  for (const name of ['clearSelection', 'saveControlGroup', 'groupMembers', 'recallControlGroup', 'refreshGroupNumbers', 'controlGroupSummary', 'groupCenter']) {
+    battle[name] = Battle.prototype[name];
+  }
+  battle.clearOrderPreview = () => {};
+  assert.equal(battle.saveControlGroup(1), 0, 'nothing selected, nothing saved');
+  a.selected = true; b.selected = true; battle.selection.add(a); battle.selection.add(b);
+  assert.equal(battle.saveControlGroup(3), 2);
+  battle.clearSelection();
+  b.selected = true; battle.selection.add(b);
+  battle.saveControlGroup(1);
+  assert.equal(b.groupNumber, 1, 'a company in several groups shows the lowest number');
+  assert.equal(a.groupNumber, 3);
+  battle.clearSelection();
+  assert.equal(battle.recallControlGroup(3), 2);
+  assert.deepEqual([...battle.selection], [a, b]);
+  assert.equal(battle.controlGroupSummary().find((g) => g.n === 3).active, true);
+  a.aliveSoldiers = [];
+  assert.equal(battle.recallControlGroup(3), 1, 'dead companies drop out of the group');
+  assert.ok(Math.abs(battle.groupCenter(3).x - 2) < 1e-9);
+  assert.equal(events[0][0], 'group_saved');
+});
+
+test('quick-select keys pick infantry inside the walls and idle companies', () => {
+  const company = (kind, ctype, zone, state, inCombat = false) => ({
+    kind, ctype, state, selected: false, aliveSoldiers: [{ zone, inCombat }],
+  });
+  const inside = company('inf', 'spear', 'inner', 'cityMarch');
+  const outside = company('inf', 'spear', 'field', 'holdAt');
+  const archer = company('inf', 'archer', 'city', 'holdAt');
+  const fighting = company('inf', 'shield', 'city', 'holdAt', true);
+  const battle = { companies: [inside, outside, archer, fighting], selection: new Set(), clearOrderPreview() {} };
+  battle.clearSelection = Battle.prototype.clearSelection;
+  assert.equal(Battle.prototype.selectInsideInfantry.call(battle), 2);
+  assert.ok(battle.selection.has(inside) && battle.selection.has(fighting));
+  assert.equal(Battle.prototype.selectIdleCompanies.call(battle), 2);
+  assert.ok(battle.selection.has(outside) && battle.selection.has(archer), 'moving or fighting companies are not idle');
+});
