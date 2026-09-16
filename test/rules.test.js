@@ -80,6 +80,15 @@ test('background mountains stay outside the full deployment area', () => {
     assert.ok(mountain.centerRadius - mountain.baseRadius >= BATTLEFIELD_CLEAR_RADIUS,
       `mountain ${i} enters the battlefield`);
   }
+  // ...และแนวตั้งทัพจริงต้องอยู่ในรัศมีนั้นด้วย — ทัพที่โตขึ้นตั้งลึกขึ้น ถ้าเลยออกไปจะไปโผล่ในภูเขา
+  const battle = new Battle(genMission(101, 'normal'), new THREE.Scene(), buildCity(new THREE.Scene()), () => {});
+  battle.spawnMarker = () => {};
+  let deepest = 0;
+  for (const c of battle.companies) for (const s of c.soldiers) deepest = Math.max(deepest, s.pos.length());
+  assert.ok(deepest < BATTLEFIELD_CLEAR_RADIUS, `deployment reaches ${Math.round(deepest)} m`);
+  // ทุกด้านต้องมีกองม้าตั้งอยู่จริง ไม่ใช่กระจุกด้านเดียวแล้วต้องลากข้ามเมืองทุกครั้ง
+  const cavSides = new Set(battle.companies.filter((c) => c.ctype === 'cav').map((c) => c.side));
+  assert.deepEqual([...cavSides].sort(), [0, 1, 2, 3]);
 });
 
 test('a multi-company order gives every company a distinct destination', () => {
