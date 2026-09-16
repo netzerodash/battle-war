@@ -4,6 +4,7 @@ import {
   SIDE_VECS, worldPoint, sectionOf, clampOnWall, sectionCenter, nearestSide, clamp,
   stairPoints, gateInsidePoint, clampFieldPoint, wallRoute, constrainFieldOutsideWall,
   RINGS, GROUND_ZONES, isInsideZone, zoneRegion, constrainToRegion, gateFrontPoint, inGateLane, distOutOf,
+  isWallZone, ringOfWallZone, clampOnInnerWall,
 } from './world.js';
 import { Company } from './company.js';
 import { DefenseSide, ReserveForce, Garrison } from './defense.js';
@@ -19,6 +20,9 @@ import { EngagementRegistry } from './engagement.js';
 import { assaultRoute, fieldRoute, nextHop } from './navigation.js';
 import { chooseTacticalTarget } from './tactical-ai.js';
 import { DefenderMarkers, DefenderGroupLabels, markerScaleForDistance, groupBadgeSprite, setGroupBadge } from './markers.js';
+
+// สถานะที่นักธนูฝ่ายเราถือว่า "เข้าประจำที่ยิงแล้ว": นอกเมืองกดกำแพงนอก / ในเมืองกดกำแพงชั้นใน
+export const ARCHER_VOLLEY_STATES = new Set(['volley', 'cityVolley']);
 
 const SPARK_MATS = {
   red: new THREE.MeshBasicMaterial({ color: 0xc03028 }),
@@ -289,10 +293,14 @@ export class Battle {
       const anchor = worldPoint(2, (i - (CFG.army.ramCompanies - 1) / 2) * 12, ramDepth, 0);
       this.companies.push(new Company(i, 2, 'ram', anchor, this));
     }
+    // กองม้ากระจายด้านละเท่า ๆ กัน — เลือกโอบด้านไหนก็ได้ ไม่ต้องลากข้ามเมืองจากด้านใต้ด้านเดียว
+    const cavPerSide = Math.ceil(CFG.army.cavalryCompanies / 4);
     for (let i = 0; i < CFG.army.cavalryCompanies; i++) {
-      const col = i % 8, row = Math.floor(i / 8);
-      const anchor = worldPoint(2, (col - 3.5) * 13, ramDepth + 18 + row * 15, 0);
-      this.companies.push(new Company(i, 2, 'cav', anchor, this));
+      const side = Math.floor(i / cavPerSide) % 4;
+      const k = i % cavPerSide;
+      const col = k % 4, row = Math.floor(k / 4);
+      const depth = (side === 2 ? ramDepth + 18 : infantryDepth + 12) + row * 15;
+      this.companies.push(new Company(i, side, 'cav', worldPoint(side, (col - 1.5) * 13, depth, 0), this));
     }
     this.stats.deployedTotal = this.companies.reduce((a, c) => a + c.soldiers.length, 0);
 
@@ -544,8 +552,22 @@ export class Battle {
         for (const s of sq.soldiers) if (s.alive && s.zone === 'city') out.push(s);
       }
     }
+    // องครักษ์ชั้นใน/วัง และพลธนูบนสันกำแพงชั้นใน — ยิงได้เมื่อนักธนูเราตามเข้าไปในเมืองแล้ว
+    // (จากแนวยิงนอกเมืองระยะไม่ถึงอยู่แล้ว จึงไม่ทำให้ซุ่มยิงข้ามกำแพงได้ฟรี)
+    for (const s of this.garrison?.soldiers || []) if (s.alive) out.push(s);
+    for (const s of this.garrison?.archers || []) if (s.alive) out.push(s);
     for (const s of this.sally.horses) if (s.alive && s.zone === 'field') out.push(s);
     return out;
+  }
+
+  // ยังมีพลธนูฝ่ายเมืองยืนอยู่บนสันกำแพงชั้น ring ในระยะ range จากจุดนี้ไหม
+  // (ชุดที่ขึ้นบันไดพาดใช้ตัดสินว่าจะขึ้นไปกวาดสันกำแพงก่อน หรือโดดลงลานด้านในเลย)
+  crestArcherNear(ring, point, range) {
+    const r2 = range * range;
+    for (const a of this.garrison?.archers || []) {
+      if (a.alive && a.ring === ring && a.pos.distanceToSquared(point) <= r2) return true;
+    }
+    return false;
   }
 
   ramUnderGate() {
@@ -569,21 +591,34 @@ export class Battle {
     return archer ? archer.takeOverRam(abandoned) : false;
   }
 
+  // ยึดกำแพงนอกด้านนี้ได้แล้ว นักธนูที่หนุนอยู่ไม่มีเป้าบนกำแพงอีก — แบ่งครึ่ง:
+  // กองคู่วางธนูหยิบหอกเข้าตะลุมบอน · กองคี่คงเป็นนักธนู ยกแนวยิงเข้าไปกดพลธนูบนกำแพงชั้นใน
+  // (ถ้าประตูนอกยังไม่เปิดก็ยังเข้าเมืองไม่ได้ ให้หยิบหอกไปก่อนเหมือนเดิม)
   rearmArchersAfterCapture(side) {
-    let soldiers = 0;
-    for (const company of this.companies) {
-      if (company.ctype !== 'archer' || company.side !== side || company.aliveSoldiers.length === 0) continue;
+    const supporting = this.companies.filter((c) => c.ctype === 'archer' && c.side === side && c.aliveSoldiers.length > 0);
+    let soldiers = 0, bombard = 0;
+    supporting.forEach((company, index) => {
       const n = company.aliveSoldiers.length;
-      if (!company.rearmAsSpear()) continue;
+      if (index % 2 === 1 && !company.gateCrew && this.sendArcherBattery(company, side)) { bombard += n; return; }
+      if (!company.rearmAsSpear()) return;
       soldiers += n;
       if (!company.gateCrew) {
         company.mode = 'hold';
         company.state = 'hold';
         company.orderAssault(side, { formation: 'column', stance: 'aggressive' });
       }
-    }
+    });
     if (soldiers > 0) this.onEvent('archer_rearmed', { side, n: soldiers });
+    if (bombard > 0) this.onEvent('archer_battery', { side, n: bombard });
     return soldiers;
+  }
+
+  // ยกแนวยิงเข้าไปตั้งในเมืองชั้นนอก ห่างหน้ากำแพงชั้นในราว 12 ม. — ระยะยิงถึงสันกำแพงสบาย
+  // แต่ยังไม่ประชิดจนโดนองครักษ์ที่ตีสวนออกมากินฟรี
+  sendArcherBattery(company, side) {
+    const R = RINGS[1];
+    const post = worldPoint(side, (company.id % 5 - 2) * 7, R.half + R.thick + 12, 0);
+    return company.orderCity(post, { formation: 'line', stance: 'aggressive' });
   }
 
   releaseGateAssaultCompanies(companies = null) {
@@ -1066,7 +1101,9 @@ export class Battle {
       const remaining = sel.filter((c) => !descending.has(c));
       // กองที่อยู่ในเมืองแล้ว (ชั้นใดก็ได้) เดินข้ามชั้นได้เลย; กองนอกเมืองต้องรอประตูนอกเปิด
       const inside = new Set(remaining.filter((c) => c.hasInsideSoldiers?.()));
-      const mobile = remaining.filter((c) => (c.isLadderCarrier || c.ctype === 'cav') && (this.gate.open || inside.has(c)));
+      // นักธนูเข้าเมืองได้ด้วย (ไปตั้งแนวยิงกดพลธนูบนกำแพงชั้นใน) — เดิมถูกกรองทิ้งตรงนี้
+      const mobile = remaining.filter((c) => (c.isLadderCarrier || c.ctype === 'cav' || c.ctype === 'archer')
+        && (this.gate.open || inside.has(c)));
       if (mobile.length) {
         // ทุกกองมุ่งจุดที่คลิก เดินเป็นแถวตอนรายกองผ่านประตู แล้วไล่ฟันศัตรูที่เจอระหว่างทาง
         const destinations = this.cityOrderDestinations(mobile, point);
@@ -1259,6 +1296,8 @@ export class Battle {
     }
     for (const sq of this.reserves.squads) for (const s of sq.soldiers) if (s.alive && !s.stair) units.push(s);
     for (const s of this.garrison.soldiers) if (s.alive) units.push(s);
+    // พลธนูบนสันกำแพงชั้นใน/วัง — ต้องอยู่ในวงรบ ไม่งั้นชุดที่ปีนขึ้นไปบนสันก็ฟันไม่ได้
+    for (const s of this.garrison.archers) if (s.alive) units.push(s);
     for (const s of this.sally.horses) if (s.alive) units.push(s);
     this._spatialUnits = units;
     this.movementGrid.rebuild(units);
@@ -1629,7 +1668,7 @@ export class Battle {
   updateArcherVolley(dt) {
     const targets = this.attackerArcherTargets();
     for (const c of this.companies) {
-      if (c.ctype !== 'archer' || c.state !== 'volley') continue;
+      if (c.ctype !== 'archer' || !ARCHER_VOLLEY_STATES.has(c.state)) continue;
       if (c.holdFire) continue;
       for (const s of c.soldiers) {
         if (!s.alive) continue;
@@ -1665,6 +1704,8 @@ export class Battle {
     }
     for (const s of this.reserves.allSoldiers()) if (s.alive) units.push(s);
     for (const s of this.garrison.soldiers) if (s.alive) units.push(s);
+    // พลธนูบนสันกำแพงชั้นใน/วัง — ต้องอยู่ในวงรบ ไม่งั้นชุดที่ปีนขึ้นไปบนสันก็ฟันไม่ได้
+    for (const s of this.garrison.archers) if (s.alive) units.push(s);
 
     // ม้าซอง + ทหารฝ่ายบุกที่อยู่ในระยะปะทะ (สงครามภาคสนาม)
     const sally = this.sally.horses.filter((h) => h.alive);
@@ -1729,7 +1770,8 @@ export class Battle {
       }
 
       // นักธนู/รถทุบยืนยิง ไม่ออกไล่ — สู้เฉพาะเมื่อโดนชิด
-      if ((u.utype === 'atkArch' && u.company.state === 'volley') || u.utype === 'crew') {
+      if ((u.utype === 'atkArch' && ARCHER_VOLLEY_STATES.has(u.company.state)) || u.utype === 'crew'
+        || u.utype === 'guardArcher') {
         this.tryAttack(u, enemy && u.pos.distanceTo(enemy.pos) < 1.4 ? enemy : null, dt);
         continue;
       }
@@ -1908,6 +1950,8 @@ export class Battle {
 
   clampToZone(u) {
     if (u.zone === 'wall') { u.pos.y = CFG.walkY; clampOnWall(u.pos); return; }
+    // สันกำแพงชั้นใน/วัง: เดินไล่กันได้ตามแนวสันกำแพง แต่ตกลงไปเองไม่ได้
+    if (isWallZone(u.zone)) { clampOnInnerWall(u.pos, ringOfWallZone(u.zone)); return; }
     if (u.zone === 'field') { u.pos.y = 0; constrainFieldOutsideWall(u.pos, this.gate.open); return; }
     const region = zoneRegion(u.zone);
     if (region < 0) return; // บันได/บันไดพาด/สันกำแพงชั้นใน — ระบบนั้นคุมตำแหน่งเอง
@@ -2339,7 +2383,7 @@ export class Battle {
 
   // ---------- ภาพ / ทำความสะอาด ----------
   syncMeshes(dt) {
-    const fieldStates = ['idle', 'hold', 'march', 'ride', 'holdAt', 'waitBase', 'toLadder', 'volley', 'battering', 'order'];
+    const fieldStates = ['idle', 'hold', 'march', 'ride', 'holdAt', 'waitBase', 'toLadder', 'volley', 'cityVolley', 'battering', 'order'];
     for (const c of this.companies) {
       for (const s of c.soldiers) s.syncMesh(dt);
       const alive = c.aliveSoldiers;

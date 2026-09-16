@@ -103,6 +103,28 @@ export function clampOnWall(pos) {
   }
 }
 
+// โซน "สันกำแพง" ของแต่ละชั้น: index = ชั้นกำแพง (0 = กำแพงนอกใช้ชื่อเดิม 'wall')
+export const WALL_ZONES = Object.freeze(['wall', 'wall2', 'wall3']);
+export const wallZoneOf = (ring) => WALL_ZONES[ring] || null;
+export const ringOfWallZone = (zone) => WALL_ZONES.indexOf(zone);
+export const isWallZone = (zone) => WALL_ZONES.includes(zone);
+
+// จำกัดตำแหน่งให้อยู่บนสันกำแพงชั้นใน (ชั้น 1 ขึ้นไป) — เทียบเท่า clampOnWall ของกำแพงนอก
+export function clampOnInnerWall(pos, ring) {
+  const R = RINGS[ring];
+  if (!R) return;
+  const ax = Math.abs(pos.x), az = Math.abs(pos.z);
+  const along = R.half + 1;
+  if (ax >= az) {
+    pos.x = Math.sign(pos.x || 1) * clamp(ax, R.half + 0.8, R.half + R.thick - 0.8);
+    pos.z = clamp(pos.z, -along, along);
+  } else {
+    pos.z = Math.sign(pos.z || 1) * clamp(az, R.half + 0.8, R.half + R.thick - 0.8);
+    pos.x = clamp(pos.x, -along, along);
+  }
+  pos.y = R.h + 0.45;
+}
+
 // หน่วยอยู่แนวกำแพงด้านไหน
 export function sectionOf(pos) {
   const ax = Math.abs(pos.x), az = Math.abs(pos.z);

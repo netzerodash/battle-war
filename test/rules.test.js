@@ -54,9 +54,15 @@ test('starting armies keep their intended size across the three-ring city', () =
   const defenders = 4 * (CFG.wallMelee + CFG.wallArchers + CFG.rockLogi.carriers)
     + CFG.reserveSquads * CFG.squadSize
     + guards(CFG.garrison.inner) + guards(CFG.garrison.palace);
-  assert.equal(attackerInfantry + attackerRams + attackerCavalry, 1956);
+  const attackers = attackerInfantry + attackerRams + attackerCavalry;
+  assert.equal(attackers, 2436);
+  // ทหารม้าต้องเป็นกำลังจริง ไม่ใช่ของประดับ — อย่างน้อย 1 ใน 8 ของทัพ และกระจายได้ครบ 4 ด้าน
+  assert.ok(attackerCavalry / attackers >= 0.125, `cavalry share ${attackerCavalry / attackers}`);
+  assert.equal(CFG.army.cavalryCompanies % 4, 0);
   // ทัพเมืองต้องเล็กกว่าทัพบุก แต่ใหญ่พอให้การรุมมั่วเสียเปรียบ (ตัวเลขจูนด้วย npm run sim)
-  assert.ok(defenders < 1956 && defenders > 1956 * 0.6, `defenders ${defenders}`);
+  assert.ok(defenders < attackers && defenders > attackers * 0.4, `defenders ${defenders}`);
+  // จำนวนหน่วยรวมสองฝ่ายคือตัวกำหนดเฟรมเรต — ห้ามบวมเกินงบที่วัดไว้ว่ายังลื่น
+  assert.ok(attackers + defenders <= 3700, `total units ${attackers + defenders}`);
 });
 
 test('move and attack orders use unmistakably different map symbols', () => {
@@ -577,15 +583,69 @@ test('attacker archers can target enemy soldiers on walls, in the city, and in t
   const carrier = make('carrier', 'city');
   const reserve = make('def', 'city');
   const sally = make('sally', 'field');
+  const guard = make('guardSpear', 'inner');
+  const crestArcher = make('guardArcher', 'wall2');
   const battle = {
     gate: { open: true },
     wallDefenders: () => [wall],
     defenses: [{ melee: [cityMelee], archers: [cityArcher], carriers: [{ s: carrier }] }],
     reserves: { squads: [{ soldiers: [reserve] }] },
+    garrison: { soldiers: [guard], archers: [crestArcher] },
     sally: { horses: [sally] },
   };
   assert.deepEqual(Battle.prototype.attackerArcherTargets.call(battle),
-    [wall, cityMelee, cityArcher, carrier, reserve, sally]);
+    [wall, cityMelee, cityArcher, carrier, reserve, guard, crestArcher, sally]);
+});
+
+test('inner-ring wall archers are reachable: our archers can shoot them and melee can claim them', () => {
+  const battle = new Battle(genMission(101, 'normal'), new THREE.Scene(), buildCity(new THREE.Scene()), () => {});
+  battle.spawnMarker = () => {};
+  const crest = battle.garrison.archers;
+  assert.ok(crest.length > 0, 'the inner rings should post archers on their wall crests');
+  // เคยเป็นบั๊ก: พลธนูชุดนี้ไม่เคยถูกใส่ทั้งในลิสต์เป้าธนูและในวงรบ จึงฆ่าไม่ได้เลยทั้งศึก
+  const shootable = new Set(battle.attackerArcherTargets());
+  assert.ok(crest.every((a) => shootable.has(a)), 'every crest archer must be targetable by our archers');
+  // และต้องฟันตายได้จริง: วางทหารเราขึ้นไปยืนประชิดบนสันกำแพงชั้นใน แล้วปล่อยให้ศึกเดิน
+  const victim = crest.find((a) => a.ring === 1);
+  const killers = [];
+  for (let i = 0; i < 4; i++) {
+    const s = new Soldier({ type: 'atk', faction: 'atk', side: 2, utype: 'spear', hp: CFG.unit.spear.hp, speed: CFG.unit.spear.speed, atkCd: CFG.unit.spear.atkCd, dmg: CFG.unit.spear.dmg });
+    s.pos.copy(victim.pos).add(new THREE.Vector3(0.4 * (i - 1.5), 0, 0.4));
+    s.zone = victim.zone;
+    s.onCrest = true;
+    battle.group.add(s.mesh);
+    battle.cityAttackers.add(s);
+    killers.push(s);
+  }
+  for (let i = 0; i < 400 && victim.alive; i++) battle.update(1 / 30);
+  assert.equal(victim.alive, false, 'a crest archer must be killable by troops that reach the crest');
+  assert.ok(killers.some((s) => s.alive), 'the boarding party should not be wiped doing it');
+});
+
+test('an escalade party clears the wall archers on the crest before dropping into the courtyard', () => {
+  const R = RINGS[1];
+  const crestPoint = new THREE.Vector3(0, 0, 0);
+  let archerAlive = true;
+  const battle = {
+    rng: () => 0.5, group: new THREE.Group(), gate: { open: true }, time: 0,
+    wallThreats: () => [0, 0, 0, 0], gatesOpen: () => [true, false, false],
+    onEvent: () => {}, onInfEnteredCity() {}, onInfLeftCity() {},
+    crestArcherNear: (ring, point) => (crestPoint.copy(point), archerAlive && ring === 1),
+  };
+  const company = new Company(0, 2, 'spear', cityRallyPoint(), battle);
+  for (const s of company.soldiers) s.zone = 'city';
+  assert.equal(company.orderEscalade(1, new THREE.Vector3(20, 0, R.half + R.thick / 2)), true);
+  // ขณะยังมีพลธนูเฝ้าสันกำแพง ชุดที่ขึ้นไปต้องยืนรบอยู่บนสัน ไม่ทะลุลงลานด้านใน
+  let onCrest = 0;
+  for (let i = 0; i < 300 && onCrest === 0; i++) { battle.time += 0.1; company.update(0.1); onCrest = company.soldiers.filter((s) => s.onCrest).length; }
+  assert.ok(onCrest > 0, 'climbers should stop and fight on the crest while archers hold it');
+  assert.ok(company.soldiers.filter((s) => s.onCrest).every((s) => s.zone === 'wall2'));
+  assert.ok(Math.abs(Math.abs(crestPoint.z) - (R.half + R.thick / 2)) < 1.5, 'the sweep check looks at the crest itself');
+  // กวาดพลธนูหมดแล้วจึงลงลานด้านในต่อจนครบกอง
+  archerAlive = false;
+  for (let i = 0; i < 900 && company.state !== 'holdAt'; i++) { battle.time += 0.1; company.update(0.1); }
+  assert.equal(company.state, 'holdAt');
+  assert.ok(company.soldiers.every((s) => s.zone === 'inner' && !s.onCrest), 'the party finishes inside the ring');
 });
 
 test('a replacement archer crew rearms and enters the city when the gate opens', () => {

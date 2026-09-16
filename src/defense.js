@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { worldPoint, sectionCenter, stairPoints, SIDE_VECS, gateFrontPoint, gateInsidePoint, regionOf, GROUND_ZONES } from './world.js';
+import { worldPoint, sectionCenter, stairPoints, SIDE_VECS, gateFrontPoint, gateInsidePoint, regionOf, GROUND_ZONES, wallZoneOf } from './world.js';
 import { Soldier } from './soldier.js';
 import { rockGeo, rockMat } from './models.js';
 import { sfx } from './audio.js';
@@ -599,7 +599,7 @@ export class Garrison {
       this.spawn('cav', zone, pos);
     }
     // พลธนูบนสันกำแพง (ด้านใต้เว้นซุ้มประตู)
-    const wallZone = `wall${ring + 1}`;
+    const wallZone = wallZoneOf(ring);
     const mid = R.half + R.thick / 2;
     for (let side = 0; side < 4; side++) {
       const ts = spreadAlong(plan.archersPerSide, mid - 3, side === 2 ? CFG.innerGates.halfWidth + 5 : 0);

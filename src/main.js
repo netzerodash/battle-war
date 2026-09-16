@@ -374,6 +374,7 @@ function onBattleEvent(type, data) {
     case 'ram_ready': UI.toast('⚫ รถทุบเข้าประจำตำแหน่ง — เริ่มกระแทกประตู!'); break;
     case 'archer_ram_takeover': UI.toast(`🏹 นักธนู ${data.n} นายรับช่วงรถทุบที่ถูกทิ้ง — ประตูยังพังต่อได้!`, 'blue'); break;
     case 'archer_rearmed': UI.toast(`⚔ นักธนู ${data.n} นายวางธนู หยิบหอก แล้วเข้ายึดเมืองด้าน${SIDE_NAMES[data.side]}!`, 'big blue'); break;
+    case 'archer_battery': UI.toast(`🏹 นักธนู ${data.n} นายยกแนวยิงเข้าเมือง — กดพลธนูบนกำแพงชั้นในด้าน${SIDE_NAMES[data.side]}!`, 'big blue'); break;
     case 'ram_lost': UI.toast('⚫ รถทุบถูกหินจากหอประตูทำลาย!', 'bad'); sfx.thud(); break;
     case 'gate_breached': UI.toast('💥 รถทุบกระหน่ำประตูจนแตกกระจาย! กองม้าเข้าได้!', 'big blue'); sfx.cheer(); break;
     case 'gate_opening': UI.toast('🔧 ทหารเรากำลังแงะประตูเมือง...'); break;

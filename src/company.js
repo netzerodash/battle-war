@@ -3,6 +3,7 @@ import { CFG } from './config.js';
 import {
   worldPoint, sectionCenter, gateFrontPoint, gateInsidePoint, isInsideCity, clampFieldPoint, SIDE_VECS,
   regionOf, GROUND_ZONES, isGroundZone, isInsideZone, zoneRegion, constrainToRegion, sectionOf, clamp, gateHalfWidth,
+  wallZoneOf, clampOnInnerWall,
 } from './world.js';
 import { Soldier } from './soldier.js';
 import { makeLadder, makeRamMesh, makeSoldierMesh } from './models.js';
@@ -12,6 +13,7 @@ import { assaultRoute, fieldRoute, routeBetween } from './navigation.js';
 import { createOrder, ORDER_KIND, ORDER_PHASE } from './orders.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
+const CITY_CENTER = new THREE.Vector3(0, 0, 0); // จุดหันหน้าของแนวยิงในเมือง — กำแพงชั้นในอยู่ระหว่างทางเสมอ
 const _v = new THREE.Vector3();
 let nextCompanyId = 1;
 
@@ -245,8 +247,9 @@ export class Company {
   }
 
   // ทหารราบเดินเข้าเมืองผ่านประตู (ได้เมื่อประตูเปิดแล้วเท่านั้น)
+  // นักธนูเข้าได้ด้วย — ถึงที่แล้วตั้งแนวยิงในเมือง (cityVolley) ไว้กดพลธนูบนสันกำแพงชั้นใน
   orderCity(point, tactics = {}) {
-    if (this.kind !== 'inf' || (this.ctype === 'archer' && !this.gateCrew)) return false;
+    if (this.kind !== 'inf') return false;
     if (!this.orderable() || this.aliveSoldiers.length === 0) return false;
     // กองนอกเมืองเข้าได้เมื่อประตูนอกเปิดแล้ว; กองที่อยู่ในเมืองแล้วเดินข้ามชั้นได้ตามประตูที่เปิดอยู่
     if (!this.battle.gate.open && !this.hasInsideSoldiers()) return false;
@@ -421,10 +424,25 @@ export class Company {
   // ถึงปลายทางของคำสั่งเดิน — ถ้าเป็นคำสั่งพาดบันไดข้ามกำแพงชั้นใน ก็เริ่มตั้งบันไดต่อทันที
   arrive() {
     if (this.state !== 'cityMarch' && this.state !== 'ride') return;
-    this.state = 'holdAt';
     this.waypoints = null;
-    if (this.order) this.order.phase = ORDER_PHASE.COMPLETE;
+    // นักธนูที่เดินเข้าเมือง (ไม่ได้ไปรับช่วงรถทุบ) ตั้งแนวยิงทันที — battle.updateArcherVolley จะยิงให้
+    this.state = (this.ctype === 'archer' && !this.gateCrew && this.mode === 'city') ? 'cityVolley' : 'holdAt';
+    if (this.state === 'cityVolley') this.spreadVolleyLine();
+    if (this.order) this.order.phase = this.state === 'cityVolley' ? ORDER_PHASE.ENGAGE : ORDER_PHASE.COMPLETE;
     if (this.escalade) this.beginEscalade();
+  }
+
+  // แนวยิงในเมือง: ยืนเรียงขนานกำแพงด้านที่กองอยู่ ไม่กระจุกเป็นก้อนให้หินหรือน้ำมันกินทีเดียว
+  spreadVolleyLine() {
+    const alive = this.aliveSoldiers;
+    if (!alive.length) return;
+    const side = sectionOf(this.anchor);
+    const t = SIDE_VECS[side].t;
+    const out = SIDE_VECS[side].n;
+    alive.forEach((s, i) => {
+      const col = (i % 5) - 2, row = Math.floor(i / 5);
+      s.gatherPos = this.anchor.clone().addScaledVector(t, col * 2.0).addScaledVector(out, row * 2.0).setY(0);
+    });
   }
 
   // ---------- พาดบันไดข้ามกำแพงชั้นใน ----------
@@ -452,7 +470,8 @@ export class Company {
       foot: worldPoint(side, t, face + topOut + run, 0),
       top: worldPoint(side, t, face + topOut, topY),
       landing: worldPoint(side, t, R.half - 1.8, 0),
-      climbers: new Set(), mesh: null, planted: false, len: 0, dir: null,
+      climbers: new Set(), onWall: new Set(), sweepT: 0, mesh: null, planted: false, len: 0, dir: null,
+      mid: worldPoint(side, t, face - R.thick / 2, R.h + 0.45), // จุดยืนกลางสันกำแพงตรงหัวบันได
     };
     this.waypoints = route;
     this.pendingTarget = null;
@@ -471,6 +490,7 @@ export class Company {
     const e = this.escalade;
     this.state = 'escalade';
     this.stateT = 0;
+    e.sweepT = 0; // นับเวลากวาดสันกำแพงตั้งแต่เริ่มตั้งบันไดจริง ไม่ใช่ตั้งแต่ออกเดิน
     e.len = e.foot.distanceTo(e.top);
     e.dir = e.top.clone().sub(e.foot).normalize();
     e.mesh = makeLadder(e.len);
@@ -497,24 +517,50 @@ export class Company {
       e.mesh.visible = true;
       if (this.order) this.order.phase = ORDER_PHASE.ENGAGE;
     }
+    e.sweepT += dt;
+    const crestZone = wallZoneOf(e.ring);
+    // ยังมีพลธนูฝ่ายเมืองเฝ้าสันกำแพงช่วงหัวบันไดอยู่ไหม — มีก็ขึ้นไปกวาดก่อน ไม่มีก็ข้ามลงลานเลย
+    const sweeping = e.sweepT < CFG.escalade.sweepTimeout
+      && !!this.battle.crestArcherNear?.(e.ring, e.mid, CFG.escalade.sweepRange);
+    const dropInside = (s) => {
+      s.onCrest = false;
+      s.pos.copy(e.landing).addScaledVector(SIDE_VECS[e.side].t, (this.battle.rng() - 0.5) * 3);
+      s.pos.y = 0;
+      s.zone = insideZone;
+      s.state = 'order';
+      s.orderTarget = null;
+      s.intent = 'escalade-landed';
+      this.battle.onInfEnteredCity(s);
+    };
     for (const s of [...e.climbers]) {
       if (!s.alive) { e.climbers.delete(s); continue; }
       s.climb.s += s.speed * CFG.escalade.climbFactor * dt;
       if (s.climb.s >= e.len) {
-        // ข้ามสันกำแพงแล้วโดดลงลานด้านใน
         e.climbers.delete(s);
         s.climb = null;
-        s.pos.copy(e.landing).addScaledVector(SIDE_VECS[e.side].t, (this.battle.rng() - 0.5) * 3);
-        s.pos.y = 0;
-        s.zone = insideZone;
-        s.state = 'order';
-        s.orderTarget = null;
-        s.intent = 'escalade-landed';
-        this.battle.onInfEnteredCity(s);
+        if (sweeping) {
+          // ขึ้นยืนบนสันกำแพง เข้าฟันพลธนูที่เฝ้าอยู่ (melee loop รับช่วงต่อ)
+          s.pos.copy(e.mid).addScaledVector(SIDE_VECS[e.side].t, (this.battle.rng() - 0.5) * 3);
+          clampOnInnerWall(s.pos, e.ring);
+          s.zone = crestZone;
+          s.onCrest = true;
+          s.state = 'order';
+          s.orderTarget = null;
+          s.intent = 'clearing-wall-archers';
+          e.onWall.add(s);
+          this.battle.onInfEnteredCity(s);
+        } else dropInside(s);
         continue;
       }
       s.pos.copy(e.foot).addScaledVector(e.dir, s.climb.s);
       s.facePoint(e.top, dt);
+    }
+    // สันกำแพงโล่งแล้ว (หรือกวาดนานเกินกำหนด) — ชุดที่อยู่บนสันโดดลงลานด้านในต่อ
+    for (const s of [...e.onWall]) {
+      if (!s.alive) { e.onWall.delete(s); continue; }
+      if (sweeping) { clampOnInnerWall(s.pos, e.ring); continue; }
+      e.onWall.delete(s);
+      dropInside(s);
     }
     let waiting = 0;
     for (const s of alive) {
@@ -536,7 +582,7 @@ export class Company {
       }
     }
     this.updateAnchor(alive);
-    if (waiting === 0 && e.climbers.size === 0) this.finishEscalade();
+    if (waiting === 0 && e.climbers.size === 0 && e.onWall.size === 0) this.finishEscalade();
   }
 
   finishEscalade() {
@@ -551,6 +597,7 @@ export class Company {
 
   // ยกเลิกการพาดบันไดเมื่อรับคำสั่งใหม่ — คนที่ค้างกลางบันไดไต่กลับลงมาที่โคน
   cancelEscalade() {
+    for (const s of this.escalade?.onWall || []) s.onCrest = false;
     const e = this.escalade;
     if (!e) return;
     for (const s of e.climbers) {
@@ -647,6 +694,18 @@ export class Company {
           s.state = 'order';
           s.facePoint(worldPoint(this.side, 0, CFG.wallHalf, 0), dt);
         }
+        break;
+      }
+
+      case 'cityVolley': {
+        // แนวยิงในเมือง: ยืนกดพลธนู/องครักษ์บนกำแพงชั้นถัดเข้าไป (หันเข้าหากลางเมือง)
+        for (const s of alive) {
+          if (s.inCombat) continue; // โดนบุกถึงตัวแล้ว ปล่อยให้ melee loop คุม
+          s.state = 'order';
+          if (s.gatherPos) this.stepUnit(s, dt, s.gatherPos, s.speed, 0.6);
+          s.facePoint(CITY_CENTER, dt);
+        }
+        this.updateAnchor(alive);
         break;
       }
 
@@ -763,13 +822,13 @@ export class Company {
   // ทหารที่ปะทะอยู่ให้ melee loop คุมตัว — ถ้ากองลากกลับเข้าแถวพร้อมกัน จะชักเย่อจนไม่ขยับและตีไม่ถึง
   // (ยกเว้นคำสั่งถอยที่ต้องดึงออกจากวงรบ) ส่วนคนที่อยู่บนกำแพง/บันได/กำลังเข้าบันไดใน กองไม่ลากตามเลย
   yieldsControl(s) {
-    if (s.zone === 'wall' || s.stair || s.climb || s.state === 'toStairUp') return true;
+    if (s.zone === 'wall' || s.onCrest || s.stair || s.climb || s.state === 'toStairUp') return true;
     return s.inCombat && this.mode !== 'retreat';
   }
 
   // ทหารที่รับคำสั่งภาคพื้นได้ — ไม่ดึงคนที่ยืนบนกำแพงหรือกำลังใช้บันไดลงมาเดินกลางอากาศ
   groundSoldiers() {
-    return this.aliveSoldiers.filter((s) => s.zone !== 'wall' && !s.stair && !s.climb);
+    return this.aliveSoldiers.filter((s) => s.zone !== 'wall' && !s.onCrest && !s.stair && !s.climb);
   }
 
   // ปลายทางแออัด (หลายกองมุ่งจุดเดียว) จนเดินต่อไม่ได้ → ถือว่าถึงแล้ว กองจะได้รับคำสั่งใหม่ได้

@@ -22,6 +22,7 @@ export class Soldier {
     this.alive = true;
     this.zone = 'field';    // 'field' | 'wall' | 'city'
     this.company = null;
+    this.onCrest = false;   // ยืนรบอยู่บนสันกำแพงชั้นใน (โซน wall2/wall3) — กองไม่ลากตัวลงมา
     this.climb = null;      // { ladder, s } ตอนปีนบันได
     this.stair = null;      // { dir: 'up'|'down', s } ตอนใช้บันไดใน
     this.pos = new THREE.Vector3();
