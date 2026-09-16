@@ -61,8 +61,11 @@ test('starting armies keep their intended size across the three-ring city', () =
   assert.equal(CFG.army.cavalryCompanies % 4, 0);
   // ทัพเมืองต้องเล็กกว่าทัพบุก แต่ใหญ่พอให้การรุมมั่วเสียเปรียบ (ตัวเลขจูนด้วย npm run sim)
   assert.ok(defenders < attackers && defenders > attackers * 0.4, `defenders ${defenders}`);
-  // จำนวนหน่วยรวมสองฝ่ายคือตัวกำหนดเฟรมเรต — ห้ามบวมเกินงบที่วัดไว้ว่ายังลื่น
-  assert.ok(attackers + defenders <= 3700, `total units ${attackers + defenders}`);
+  // จำนวนหน่วยรวมสองฝ่ายคือตัวกำหนดเฟรมเรต — เพดานนี้มาจากการวัดจริง ไม่ใช่การเดา:
+  // 3,808 หน่วย = 12.98 ms/เฟรม (เกมเดิม 3,373 หน่วย = 12.02) ยังพอมีงบให้เรนเดอร์ที่ 60fps
+  // ถ้าจะดันเกินนี้ ต้องวัดใหม่ก่อน และระวังกองสำรองเป็นพิเศษ — มันยืนกระจุกเป็นวง
+  // ทำให้ลูปปะทะแพงกว่าหน่วยที่กระจายตัวมาก (600 นายดันต้นทุนขึ้นเป็น 15 ms)
+  assert.ok(attackers + defenders <= 3900, `total units ${attackers + defenders}`);
 });
 
 test('move and attack orders use unmistakably different map symbols', () => {
