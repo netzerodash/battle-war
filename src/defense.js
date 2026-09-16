@@ -556,6 +556,9 @@ function centroidOf(list) {
   return c.multiplyScalar(1 / list.length).setY(0);
 }
 
+// จำนวนองครักษ์ต่อแถวของกองเฝ้าลานด้านข้าง (กว้างพอดีวงชั้นในสุดที่ half = 18)
+const GUARD_ROW = 5;
+
 export class Garrison {
   constructor(battle) {
     this.battle = battle;
@@ -583,11 +586,14 @@ export class Garrison {
         this.spawn('spear', zone, new THREE.Vector3((col - 5.5) * 1.5, 0, gateZ - shieldRows * 1.5 - 1.2 - row * 1.5));
       } else {
         // เฝ้าลานด้านอื่นของชั้น (เมืองชั้นใน: เหนือ/ตะวันออก/ตะวันตก · วัง: ตะวันออก/ตะวันตก ข้างตำหนัก)
+        // เรียงเป็นตารางแถวละ GUARD_ROW นาย แล้วซ้อนแถวถัดไปเข้าด้านใน — ถ้าปล่อยให้ยืดเป็น
+        // แถวเดียวยาวตามแนวกำแพง พอกองใหญ่ขึ้นปลายแถวจะล้นมุมวงออกไปนอกชั้นของตัวเอง
         const j = i - behind;
         const sides = ring === CFG.rings.length - 1 ? [1, 3] : [0, 1, 3];
         const side = sides[j % sides.length];
         const k = Math.floor(j / sides.length);
-        this.spawn('spear', zone, worldPoint(side, (k - 2) * 2.4, ringDepth, 0));
+        const col = k % GUARD_ROW, row = Math.floor(k / GUARD_ROW);
+        this.spawn('spear', zone, worldPoint(side, (col - (GUARD_ROW - 1) / 2) * 2.4, ringDepth - row * 2.2, 0));
       }
     }
     for (let i = 0; i < plan.cav; i++) {
